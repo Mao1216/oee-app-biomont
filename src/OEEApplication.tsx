@@ -179,7 +179,7 @@ export default function OEEApplication() {
         const id = String(getImportValue(row, ['Código OT', 'Codigo OT', 'OT', 'Orden', 'Orden de trabajo', 'ID'])).trim();
         const statusText = String(getImportValue(row, ['Estado', 'Status'])).toLowerCase();
         return {
-          id: id || `OT-IMPORTADA-${index + 1}`,
+          id,
           product: String(getImportValue(row, ['Producto', 'Descripción', 'Descripcion', 'Material'])).trim() || 'Sin producto',
           line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
           machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
