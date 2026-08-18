@@ -161,7 +161,7 @@ export default function OEEApplication() {
     const text = String(value ?? '').trim();
     if (!text) return 0;
     const normalized = text.includes(',')
-      ? text.replace(/\\./g, '').replace(',', '.')
+      ? text.replace(/\./g, '').replace(',', '.')
       : text.replace(/[^0-9.-]/g, '');
     return Number(normalized) || 0;
   };
