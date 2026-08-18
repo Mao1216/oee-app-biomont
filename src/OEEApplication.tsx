@@ -6,8 +6,9 @@ import {
 import {
   LayoutDashboard, ClipboardList, CheckSquare, Activity, History, Bot, Settings,
   LogOut, Bell, User, Play, Pause, AlertTriangle, AlertOctagon, Wrench, CheckCircle,
-  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare
+  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare, Upload
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const COLORS = {
   success: '#10b981', // emerald-500
@@ -128,6 +129,9 @@ export default function OEEApplication() {
   
   // App Data State
   const [records, setRecords] = useState([]);
+  const [workOrders, setWorkOrders] = useState(WORK_ORDERS);
+  const [importMessage, setImportMessage] = useState('');
+  const workOrdersFileInputRef = useRef(null);
   
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(null);
@@ -142,6 +146,60 @@ export default function OEEApplication() {
     setIsLoggedIn(false);
     setRole(null);
     setActiveSession(null);
+  };
+
+  const getImportValue = (row, aliases) => {
+    const normalizedAliases = aliases.map(alias => alias.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const entry = Object.entries(row).find(([key]) =>
+      normalizedAliases.includes(String(key).toLowerCase().replace(/[^a-z0-9]/g, ''))
+    );
+    return entry ? entry[1] : '';
+  };
+
+  const parsePlannedQuantity = (value) => {
+    if (typeof value === 'number') return value;
+    const text = String(value ?? '').trim();
+    if (!text) return 0;
+    const normalized = text.includes(',')
+      ? text.replace(/\\./g, '').replace(',', '.')
+      : text.replace(/[^0-9.-]/g, '');
+    return Number(normalized) || 0;
+  };
+
+  const handleWorkOrdersImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+
+      const importedOrders = rows.map((row, index) => {
+        const id = String(getImportValue(row, ['Código OT', 'Codigo OT', 'OT', 'Orden', 'Orden de trabajo', 'ID'])).trim();
+        const statusText = String(getImportValue(row, ['Estado', 'Status'])).toLowerCase();
+        return {
+          id: id || `OT-IMPORTADA-${index + 1}`,
+          product: String(getImportValue(row, ['Producto', 'Descripción', 'Descripcion', 'Material'])).trim() || 'Sin producto',
+          line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
+          machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
+          plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
+          status: statusText.includes('proceso') || statusText.includes('progress') ? 'in_progress' : 'pending',
+          date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
+        };
+      }).filter(order => order.id);
+
+      if (!importedOrders.length) {
+        throw new Error('El archivo no contiene filas de órdenes de trabajo.');
+      }
+
+      setWorkOrders(importedOrders);
+      setImportMessage(`${importedOrders.length} orden(es) de trabajo cargada(s) desde ${file.name}.`);
+    } catch (error) {
+      setImportMessage('No se pudo leer el Excel. Verifica que la primera hoja incluya el listado de OT.');
+    } finally {
+      event.target.value = '';
+    }
   };
 
   // Helper to calculate active session OEE
@@ -352,8 +410,30 @@ export default function OEEApplication() {
           <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
           <p className="text-slate-500">Seleccione una OT para iniciar el registro de producción.</p>
         </div>
-        <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
+        <div className="flex items-center gap-3">
+          {role === 'supervisor' && (
+            <>
+              <input
+                ref={workOrdersFileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={handleWorkOrdersImport}
+              />
+              <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}>
+                <Upload size={18} /> Cargar Excel
+              </Button>
+            </>
+          )}
+          <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
+        </div>
       </div>
+
+      {importMessage && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          {importMessage}
+        </div>
+      )}
 
       <Card>
         <div className="overflow-x-auto">
@@ -369,7 +449,7 @@ export default function OEEApplication() {
               </tr>
             </thead>
             <tbody>
-              {WORK_ORDERS.map((ot) => (
+              {workOrders.map((ot) => (
                 <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
                   <td className="p-4 font-medium text-slate-800">{ot.id}</td>
                   <td className="p-4 text-slate-600">{ot.product}</td>
