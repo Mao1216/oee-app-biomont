@@ -1065,8 +1065,15 @@ export default function OEEApplication() {
 
                 <div className="flex gap-4 pt-4 border-t border-slate-200">
                   <Button variant="danger" className="flex-1" onClick={() => {
-                    alert("Solicitud de subsanación enviada al operador.");
-                    setSelectedRecord(null);
+                    const meeting = {
+                       code: `REU-${Date.now().toString().slice(-6)}`,
+                       attendee: 'Juanito',
+                       date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString(),
+                       topic: `Revisión de indicadores de ${selectedRecord.id}`
+                     };
+                     setRecords(records.map(record => record.id === selectedRecord.id ? {...record, status: 'correction_requested', correctionMeeting: meeting} : record));
+                     alert(`Solicitud enviada. Se asignó la reunión ${meeting.code} con Juanito para el ${meeting.date}.`);
+                     setSelectedRecord(null);
                   }}><Edit size={18}/> Solicitar Corrección</Button>
                   <Button variant="success" className="flex-1" onClick={() => {
                     // Update state to validated
