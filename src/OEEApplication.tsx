@@ -790,6 +790,24 @@ export default function OEEApplication() {
               </select>
             </div>
             
+            {lossType === 'performance' && (
+              <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
+                <p className="font-semibold">Velocidad estándar definida: {activeSession.standardSpeed} und/min</p>
+                <p className="mt-1 text-purple-700">La velocidad real y las microparadas determinan el factor de rendimiento.</p>
+              </div>
+            )}
+
+            {lossType === 'performance' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Velocidad promedio real (und/min)</label>
+                <input
+                  type="number" min="0" step="0.1" placeholder={`Estándar: ${activeSession.standardSpeed}`}
+                  className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-purple-500 focus:ring-purple-500 text-lg"
+                  value={lossForm.speed} onChange={(e) => setLossForm({...lossForm, speed: e.target.value})}
+                />
+              </div>
+            )}
+
             {lossType !== 'quality' && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'performance' ? 'Tiempo total de microparadas (minutos)' : 'Duración (minutos)'}</label>
@@ -855,14 +873,7 @@ export default function OEEApplication() {
                 value={qtyForm.produced} onChange={(e) => setQtyForm({...qtyForm, produced: e.target.value})}
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">De las cuales son Rechazo (Unidades)</label>
-              <input 
-                type="number" min="0" placeholder="Ej. 20"
-                className="w-full border-slate-300 rounded-lg shadow-sm p-4 border text-xl font-bold text-rose-600 focus:border-rose-500 focus:ring-rose-500"
-                value={qtyForm.rejected} onChange={(e) => setQtyForm({...qtyForm, rejected: e.target.value})}
-              />
-            </div>
+            
             
             <Button 
               className="w-full !mt-6 !py-4 text-lg bg-emerald-600 hover:bg-emerald-700" 
