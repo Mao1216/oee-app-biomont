@@ -48,14 +48,14 @@ const WORK_ORDERS = [
 ];
 
 const MACHINES = [
-  { id: "B-01", name: "Blistera B-01", line: "Línea Empaque 1", status: "available" },
-  { id: "E-01", name: "Estuchadora E-01", line: "Línea Empaque 1", status: "maintenance" },
-  { id: "L-02", name: "Llenadora L-02", line: "Línea Líquidos 2", status: "occupied" },
+  { id: "B-01", name: "Blistera B-01", line: "Línea Empaque 1", status: "available", standardSpeed: 100 },
+  { id: "E-01", name: "Estuchadora E-01", line: "Línea Empaque 1", status: "maintenance", standardSpeed: 120 },
+  { id: "L-02", name: "Llenadora L-02", line: "Línea Líquidos 2", status: "occupied", standardSpeed: 80 },
 ];
 
 const LOSS_CAUSES = {
   availability: ["Cambio de formato", "Limpieza profunda", "Mantenimiento preventivo", "Avería mecánica", "Avería eléctrica", "Falta de material"],
-  performance: ["Microparadas", "Velocidad reducida", "Atasco de material", "Ajuste menor"],
+  performance: ["Microparada de máquina", "Microparada de línea", "Atasco de material", "Ajuste menor"],
   quality: ["Blister mal sellado", "Falta de lote/vencimiento", "Volumen incorrecto", "Contaminación cruzada"]
 };
 
@@ -237,11 +237,15 @@ export default function OEEApplication() {
     const operatingTime = plannedTimeMin - availLoss;
     const availability = plannedTimeMin > 0 ? (operatingTime / plannedTimeMin) * 100 : 0;
 
-    // Simplified Performance: (Total produced / Expected in operating time)
-    // Assume 100 units/min ideal rate
-    const idealRate = 100;
-    const expectedProduction = operatingTime * idealRate;
-    const performance = expectedProduction > 0 ? (session.realQty / expectedProduction) * 100 : 0;
+    // Rendimiento: compara la velocidad informada con el estándar de la máquina
+    // y descuenta las microparadas del tiempo operativo para obtener la velocidad efectiva.
+    const standardSpeed = session.standardSpeed || 100;
+    const reportedSpeed = session.actualSpeed || standardSpeed;
+    const microStopMinutes = perfLoss;
+    const effectiveSpeed = operatingTime > 0
+      ? reportedSpeed * Math.max(0, operatingTime - microStopMinutes) / operatingTime
+      : 0;
+    const performance = standardSpeed > 0 ? (effectiveSpeed / standardSpeed) * 100 : 0;
 
     // Quality
     const quality = session.realQty > 0 ? (session.goodQty / session.realQty) * 100 : 0;
@@ -254,7 +258,11 @@ export default function OEEApplication() {
       q: Math.max(0, Math.min(100, quality)),
       oee: Math.max(0, Math.min(100, oee)),
       operatingTime,
-      availLoss
+      availLoss,
+      microStopMinutes,
+      standardSpeed,
+      reportedSpeed,
+      effectiveSpeed
     };
   };
 
@@ -493,6 +501,8 @@ export default function OEEApplication() {
                           shift: SHIFTS[0],
                           realQty: 0, goodQty: 0, rejectQty: 0,
                           losses: [],
+                          standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100,
+                          actualSpeed: 0,
                           startTime: new Date().toLocaleTimeString(),
                           plannedTime: 480
                         });
@@ -564,10 +574,10 @@ export default function OEEApplication() {
   const ActiveProductionView = () => {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
-    const [lossForm, setLossForm] = useState({ cause: '', duration: '', qty: '', comment: '' });
+    const [lossForm, setLossForm] = useState({ cause: '', duration: '', qty: '', speed: '', comment: '' });
     
     const [qtyModalOpen, setQtyModalOpen] = useState(false);
-    const [qtyForm, setQtyForm] = useState({ produced: '', rejected: '' });
+    const [qtyForm, setQtyForm] = useState({ produced: '' });
 
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
@@ -581,32 +591,32 @@ export default function OEEApplication() {
         duration: parseInt(lossForm.duration) || 0,
         qty: parseInt(lossForm.qty) || 0,
         comment: lossForm.comment,
+        speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.actualSpeed || activeSession.standardSpeed) : 0,
         time: new Date().toLocaleTimeString()
       };
       
       setActiveSession({
         ...activeSession,
         losses: [...activeSession.losses, newLoss],
-        // If it's a quality loss, automatically add to reject count
+        actualSpeed: lossType === 'performance' ? newLoss.speed : activeSession.actualSpeed,
+        // Los rechazos se registran únicamente como pérdida de calidad.
         rejectQty: lossType === 'quality' ? activeSession.rejectQty + newLoss.qty : activeSession.rejectQty,
         realQty: lossType === 'quality' ? activeSession.realQty + newLoss.qty : activeSession.realQty,
       });
       
       setLossModalOpen(false);
-      setLossForm({ cause: '', duration: '', qty: '', comment: '' });
+      setLossForm({ cause: '', duration: '', qty: '', speed: '', comment: '' });
     };
 
     const handleUpdateQty = () => {
       const produced = parseInt(qtyForm.produced) || 0;
-      const rejected = parseInt(qtyForm.rejected) || 0;
       setActiveSession({
         ...activeSession,
         realQty: activeSession.realQty + produced,
-        rejectQty: activeSession.rejectQty + rejected,
-        goodQty: activeSession.goodQty + (produced - rejected)
+        goodQty: activeSession.goodQty + produced
       });
       setQtyModalOpen(false);
-      setQtyForm({ produced: '', rejected: '' });
+      setQtyForm({ produced: '' });
     };
 
     const handleFinish = () => {
@@ -666,6 +676,7 @@ export default function OEEApplication() {
           <Card className="p-4 border-l-4 border-l-purple-500">
             <p className="text-sm font-medium text-slate-600">Rendimiento</p>
             <h3 className="text-2xl font-bold text-slate-800">{metrics.p.toFixed(1)}%</h3>
+            <p className="text-xs text-purple-600 mt-1">{metrics.effectiveSpeed.toFixed(1)} / {metrics.standardSpeed} und/min</p>
           </Card>
           <Card className="p-4 border-l-4 border-l-emerald-500">
             <p className="text-sm font-medium text-slate-600">Calidad</p>
@@ -781,7 +792,7 @@ export default function OEEApplication() {
             
             {lossType !== 'quality' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Duración (minutos)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'performance' ? 'Tiempo total de microparadas (minutos)' : 'Duración (minutos)'}</label>
                 <input 
                   type="number" min="1"
                   className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500 text-lg"
@@ -821,7 +832,7 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || (lossType !== 'quality' && !lossForm.duration) || (lossType === 'quality' && !lossForm.qty)}
+              disabled={!lossForm.cause || (lossType !== 'quality' && !lossForm.duration) || (lossType === 'performance' && !lossForm.speed) || (lossType === 'quality' && !lossForm.qty)}
               onClick={handleAddLoss}
             >
               Registrar Pérdida
@@ -837,7 +848,7 @@ export default function OEEApplication() {
              </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Nueva Producción (Unidades totales)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Total producido (Unidades)</label>
               <input 
                 type="number" min="0" placeholder="Ej. 5000"
                 className="w-full border-slate-300 rounded-lg shadow-sm p-4 border text-xl font-bold focus:border-blue-500 focus:ring-blue-500"
