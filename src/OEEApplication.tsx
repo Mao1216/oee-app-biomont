@@ -34,12 +34,17 @@ const getOEEColor = (value) => {
 // Dummy Data
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
+const RESPONSIBLE_OPERATORS = [{ id: "RESP-001", name: "Juanito" }];
 const OPERATORS = [
   { id: "OP-042", name: "Carlos Mendoza" },
   { id: "OP-051", name: "María Torres" },
   { id: "OP-063", name: "José Ramírez" },
   { id: "OP-078", name: "Lucía Flores" }
 ];
+const DEMO_CREDENTIALS = {
+  supervisor: { username: "molin", password: "password", name: "Molin" },
+  responsible_operator: { username: "Juanito", password: "password", name: "Juanito" }
+};
 
 const WORK_ORDERS = [
   { id: "OT-2026-0801", product: "Paracetamol 500mg Blister", line: "Línea Empaque 1", machine: "Blistera B-01", plannedQty: 50000, status: "pending", date: "2026-08-18" },
@@ -136,8 +141,11 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 
 export default function OEEApplication() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [role, setRole] = useState(null); // 'operator', 'supervisor'
+  const [role, setRole] = useState(null); // 'supervisor', 'responsible_operator'
   const [currentView, setCurrentView] = useState('dashboard');
+  const [loginRole, setLoginRole] = useState('supervisor');
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [loginError, setLoginError] = useState('');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   
   // App Data State
@@ -145,15 +153,25 @@ export default function OEEApplication() {
   const [workOrders, setWorkOrders] = useState(WORK_ORDERS);
   const [importMessage, setImportMessage] = useState('');
   const [operatorAssignments, setOperatorAssignments] = useState({});
+  const [responsibleAssignments, setResponsibleAssignments] = useState({});
   const workOrdersFileInputRef = useRef(null);
   
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(null);
 
-  const handleLogin = (selectedRole) => {
-    setRole(selectedRole);
+  const currentUser = role ? DEMO_CREDENTIALS[role] : null;
+
+  const handleLogin = (event) => {
+    event.preventDefault();
+    const credentials = DEMO_CREDENTIALS[loginRole];
+    if (loginForm.username !== credentials.username || loginForm.password !== credentials.password) {
+      setLoginError('Usuario o contraseña incorrectos.');
+      return;
+    }
+    setRole(loginRole);
     setIsLoggedIn(true);
-    setCurrentView(selectedRole === 'operator' ? 'work_orders' : 'dashboard');
+    setCurrentView(loginRole === 'responsible_operator' ? 'work_orders' : 'dashboard');
+    setLoginError('');
   };
 
   const logout = () => {
@@ -221,6 +239,10 @@ export default function OEEApplication() {
     setOperatorAssignments(current => ({ ...current, [assignmentKey]: operatorId }));
   };
 
+  const assignResponsibleOperator = (order, operatorId) => {
+    setResponsibleAssignments(current => ({ ...current, [order.id]: operatorId }));
+  };
+
   // Helper to calculate active session OEE
   const calculateSessionMetrics = (session) => {
     if (!session) return { a: 0, p: 0, q: 0, oee: 0 };
@@ -275,42 +297,30 @@ export default function OEEApplication() {
             <h1 className="text-2xl font-bold text-white">BIOEE</h1>
             <p className="text-blue-100 mt-2">Sistema de Gestión y Medición de OEE</p>
           </div>
-          <div className="p-8 space-y-6">
-            <p className="text-center text-slate-600 font-medium">Seleccione su rol para ingresar (Demo)</p>
-            <div className="grid grid-cols-1 gap-4">
-              <button 
-                onClick={() => handleLogin('operator')}
-                className="flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="bg-slate-100 p-3 rounded-lg group-hover:bg-blue-100 group-hover:text-blue-600 text-slate-600">
-                    <User size={24} />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="font-bold text-slate-800">Operario de Producción</h3>
-                    <p className="text-sm text-slate-500">Registro de OT y Pérdidas</p>
-                  </div>
-                </div>
-                <ChevronRight className="text-slate-400 group-hover:text-blue-500" />
-              </button>
-              
-              <button 
-                onClick={() => handleLogin('supervisor')}
-                className="flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="bg-slate-100 p-3 rounded-lg group-hover:bg-blue-100 group-hover:text-blue-600 text-slate-600">
-                    <CheckSquare size={24} />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="font-bold text-slate-800">Supervisor</h3>
-                    <p className="text-sm text-slate-500">Validaciones y Analítica</p>
-                  </div>
-                </div>
-                <ChevronRight className="text-slate-400 group-hover:text-blue-500" />
-              </button>
+          <form className="p-8 space-y-5" onSubmit={handleLogin}>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Perfil de acceso</label>
+              <select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => {
+                setLoginRole(event.target.value);
+                setLoginForm({ username: '', password: '' });
+                setLoginError('');
+              }}>
+                <option value="supervisor">Supervisor</option>
+                <option value="responsible_operator">Operario responsable</option>
+              </select>
             </div>
-          </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Usuario</label>
+              <input className="w-full rounded-lg border border-slate-300 p-3" value={loginForm.username} onChange={(event) => setLoginForm({...loginForm, username: event.target.value})} autoComplete="username" />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Contraseña</label>
+              <input type="password" className="w-full rounded-lg border border-slate-300 p-3" value={loginForm.password} onChange={(event) => setLoginForm({...loginForm, password: event.target.value})} autoComplete="current-password" />
+            </div>
+            {loginError && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{loginError}</p>}
+            <Button className="w-full !py-3" type="submit"><User size={18} /> Ingresar</Button>
+            <p className="text-center text-xs text-slate-500">Demo: supervisor <strong>molin</strong> / password · operario responsable <strong>Juanito</strong> / password</p>
+          </form>
         </div>
       </div>
     );
@@ -435,7 +445,7 @@ export default function OEEApplication() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
-          <p className="text-slate-500">Seleccione una OT para iniciar el registro de producción.</p>
+          <p className="text-slate-500">{role === 'supervisor' ? 'Carga y consulta las órdenes de trabajo.' : 'Seleccione una OT para iniciar el registro de producción.'}</p>
         </div>
         <div className="flex items-center gap-3">
           {role === 'supervisor' && (
@@ -491,26 +501,60 @@ export default function OEEApplication() {
                     </Badge>
                   </td>
                   <td className="p-4 text-right">
-                    <Button 
-                      variant="primary" 
-                      className="!px-4 !py-2 text-sm"
-                      onClick={() => {
-                        setActiveSession({
-                          ...ot,
-                          operator: DUMMY_USER.name,
-                          shift: SHIFTS[0],
-                          realQty: 0, goodQty: 0, rejectQty: 0,
-                          losses: [],
-                          standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100,
-                          actualSpeed: 0,
-                          startTime: new Date().toLocaleTimeString(),
-                          plannedTime: 480
-                        });
-                        setCurrentView('active_production');
-                      }}
-                    >
-                      {ot.status === 'pending' ? 'Iniciar OT' : 'Continuar'} <ArrowRight size={16} />
-                    </Button>
+                    {role === 'supervisor' ? (
+                      <span className="text-sm text-slate-500">Asignación gestionada por el operario responsable</span>
+                    ) : (
+                      <Button 
+                        variant="primary" 
+                        className="!px-4 !py-2 text-sm"
+                        onClick={() => {
+                          setActiveSession({
+                            ...ot,
+                            operator: currentUser.name,
+                            shift: SHIFTS[0],
+                            realQty: 0, goodQty: 0, rejectQty: 0,
+                            losses: [],
+                            standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100,
+                            actualSpeed: 0,
+                            startTime: new Date().toLocaleTimeString(),
+                            plannedTime: 480
+                          });
+                          setCurrentView('active_production');
+                        }}
+                      >
+                        {ot.status === 'pending' ? 'Iniciar OT' : 'Continuar'} <ArrowRight size={16} />
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+
+  const ResponsibleOperatorView = () => (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-800">Operario responsable</h2>
+        <p className="text-slate-500">Asigna el responsable que administrará los operarios de cada OT.</p>
+      </div>
+      <Card>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead><tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600"><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Línea</th><th className="p-4 font-semibold">Operario responsable</th></tr></thead>
+            <tbody>
+              {workOrders.map((order) => (
+                <tr key={order.id} className="border-b border-slate-100 last:border-0">
+                  <td className="p-4 font-medium text-slate-800">{order.id}</td>
+                  <td className="p-4 text-slate-700">{order.line}</td>
+                  <td className="p-4">
+                    <select className="w-full min-w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[order.id] || ''} onChange={(event) => assignResponsibleOperator(order, event.target.value)}>
+                      <option value="">Selecciona un responsable</option>
+                      {RESPONSIBLE_OPERATORS.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
+                    </select>
                   </td>
                 </tr>
               ))}
@@ -525,7 +569,7 @@ export default function OEEApplication() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <div>
         <h2 className="text-2xl font-bold text-slate-800">Operarios</h2>
-        <p className="text-slate-500">Asigna el operario responsable a cada línea de trabajo de una OT.</p>
+        <p className="text-slate-500">Asigna los operarios de producción a las líneas de las OT que tienes a cargo.</p>
       </div>
 
       <Card>
@@ -540,7 +584,7 @@ export default function OEEApplication() {
               </tr>
             </thead>
             <tbody>
-              {workOrders.map((order) => {
+              {workOrders.filter((order) => responsibleAssignments[order.id] === 'RESP-001').map((order) => {
                 const assignmentKey = `${order.id}-${order.line}`;
                 return (
                   <tr key={assignmentKey} className="border-b border-slate-100 last:border-0">
@@ -567,6 +611,9 @@ export default function OEEApplication() {
             </tbody>
           </table>
         </div>
+        {workOrders.filter((order) => responsibleAssignments[order.id] === 'RESP-001').length === 0 && (
+          <p className="p-6 text-center text-slate-500">El supervisor debe asignarte una OT antes de registrar operarios.</p>
+        )}
       </Card>
     </div>
   );
@@ -1186,7 +1233,8 @@ export default function OEEApplication() {
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
-          <SidebarItem icon={Users} label="Operarios" viewId="operators" />
+          {role === 'supervisor' && <SidebarItem icon={Users} label="Operario responsable" viewId="responsible_operator" />}
+          {role === 'responsible_operator' && <SidebarItem icon={Users} label="Operarios" viewId="operators" />}
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
           {role === 'supervisor' && <SidebarItem icon={History} label="Historial" viewId="history" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
@@ -1221,11 +1269,11 @@ export default function OEEApplication() {
             </button>
             <div className="flex items-center gap-3 border-l border-slate-200 pl-6">
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-bold text-slate-800">{DUMMY_USER.name}</p>
-                <p className="text-xs text-slate-500">{role === 'supervisor' ? 'Supervisor Planta' : 'Operario Producción'}</p>
+                <p className="text-sm font-bold text-slate-800">{currentUser.name}</p>
+                <p className="text-xs text-slate-500">{role === 'supervisor' ? 'Supervisor Planta' : 'Operario responsable'}</p>
               </div>
               <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold border border-blue-200">
-                {DUMMY_USER.name.charAt(0)}
+                {currentUser.name.charAt(0)}
               </div>
             </div>
           </div>
@@ -1236,6 +1284,7 @@ export default function OEEApplication() {
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
             {currentView === 'work_orders' && <WorkOrdersView />}
+            {currentView === 'responsible_operator' && <ResponsibleOperatorView />}
             {currentView === 'operators' && <OperatorsView />}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
