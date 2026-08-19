@@ -578,10 +578,27 @@ export default function OEEApplication() {
     
     const [qtyModalOpen, setQtyModalOpen] = useState(false);
     const [qtyForm, setQtyForm] = useState({ produced: '' });
+    const [ticketModalOpen, setTicketModalOpen] = useState(false);
+    const [maintenanceTicket, setMaintenanceTicket] = useState(null);
+    const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
 
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
     const metrics = calculateSessionMetrics(activeSession);
+    const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
+
+    const handleCreateMaintenanceTicket = () => {
+      const date = new Date();
+      const ticketCode = `MT-${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}-${String(Date.now()).slice(-5)}`;
+      setMaintenanceTicket({
+        code: ticketCode,
+        equipment: activeSession.machine,
+        cause: lossForm.cause,
+        ...ticketForm,
+        createdAt: date.toLocaleTimeString()
+      });
+      setTicketModalOpen(false);
+    };
 
     const handleAddLoss = () => {
       const newLoss = {
@@ -592,6 +609,8 @@ export default function OEEApplication() {
         qty: parseInt(lossForm.qty) || 0,
         comment: lossForm.comment,
         speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.actualSpeed || activeSession.standardSpeed) : 0,
+        ticketCode: requiresMaintenanceTicket ? maintenanceTicket?.code : null,
+        ticket: requiresMaintenanceTicket ? maintenanceTicket : null,
         time: new Date().toLocaleTimeString()
       };
       
@@ -606,6 +625,8 @@ export default function OEEApplication() {
       
       setLossModalOpen(false);
       setLossForm({ cause: '', duration: '', qty: '', speed: '', comment: '' });
+      setMaintenanceTicket(null);
+      setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     };
 
     const handleUpdateQty = () => {
@@ -755,6 +776,11 @@ export default function OEEApplication() {
                       <div>
                         <p className="font-medium text-slate-800">{loss.cause}</p>
                         <p className="text-xs text-slate-500">{loss.time} {loss.comment && `- ${loss.comment}`}</p>
+                        {loss.ticketCode && (
+                          <p className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                            <Wrench size={12} /> Ticket: {loss.ticketCode}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="text-right">
@@ -783,7 +809,10 @@ export default function OEEApplication() {
               <label className="block text-sm font-medium text-slate-700 mb-1">Causa de la Pérdida</label>
               <select 
                 className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500"
-                value={lossForm.cause} onChange={(e) => setLossForm({...lossForm, cause: e.target.value})}
+                value={lossForm.cause} onChange={(e) => {
+                  setLossForm({...lossForm, cause: e.target.value});
+                  setMaintenanceTicket(null);
+                }}
               >
                 <option value="">Seleccione una causa...</option>
                 {LOSS_CAUSES[lossType].map(c => <option key={c} value={c}>{c}</option>)}
@@ -830,15 +859,26 @@ export default function OEEApplication() {
               </div>
             )}
 
-            {lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica' ? (
-              <div className="bg-rose-50 border border-rose-200 p-4 rounded-lg flex gap-3 items-start">
-                <Wrench className="text-rose-500 shrink-0" />
-                <div>
-                  <p className="font-semibold text-rose-800 text-sm">Crear Ticket de Mantenimiento</p>
-                  <p className="text-xs text-rose-600 mt-1">Al guardar esta pérdida, se generará automáticamente un ticket de atención al área de mantenimiento.</p>
+            {requiresMaintenanceTicket && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex gap-3">
+                  <Wrench className="shrink-0 text-amber-600" />
+                  <div className="flex-1">
+                    <p className="font-semibold text-amber-900 text-sm">La avería requiere un ticket de mantenimiento</p>
+                    <p className="mt-1 text-xs text-amber-800">Completa el detalle técnico antes de registrar el evento.</p>
+                    {maintenanceTicket ? (
+                      <p className="mt-3 inline-flex rounded bg-white px-2 py-1 text-xs font-bold text-amber-800">
+                        Ticket generado: {maintenanceTicket.code}
+                      </p>
+                    ) : (
+                      <Button variant="secondary" className="!mt-3 !border-amber-300 !bg-white !text-amber-800" onClick={() => setTicketModalOpen(true)}>
+                        <Wrench size={16} /> Ticketera de mantenimiento
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
-            ) : null}
+            )}
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Comentario (Opcional)</label>
@@ -850,10 +890,38 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || (lossType !== 'quality' && !lossForm.duration) || (lossType === 'performance' && !lossForm.speed) || (lossType === 'quality' && !lossForm.qty)}
+              disabled={!lossForm.cause || (lossType !== 'quality' && !lossForm.duration) || (lossType === 'performance' && !lossForm.speed) || (lossType === 'quality' && !lossForm.qty) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               Registrar Pérdida
+            </Button>
+          </div>
+        </Modal>
+
+        <Modal isOpen={ticketModalOpen} onClose={() => setTicketModalOpen(false)} title="Ticketera de mantenimiento">
+          <div className="space-y-4">
+            <div className="rounded-lg bg-slate-50 p-4 text-sm">
+              <p className="font-semibold text-slate-800">{activeSession.machine}</p>
+              <p className="mt-1 text-slate-500">{lossForm.cause} · OT {activeSession.id}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Prioridad</label>
+              <select className="w-full rounded-lg border border-slate-300 p-3" value={ticketForm.priority} onChange={(e) => setTicketForm({...ticketForm, priority: e.target.value})}>
+                <option>Alta</option>
+                <option>Media</option>
+                <option>Baja</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Detalle de la avería</label>
+              <textarea className="w-full rounded-lg border border-slate-300 p-3" rows="4" placeholder="Describe el síntoma, componente afectado y condición de la máquina." value={ticketForm.detail} onChange={(e) => setTicketForm({...ticketForm, detail: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Reportado por</label>
+              <input className="w-full rounded-lg border border-slate-300 p-3" value={ticketForm.reportedBy} onChange={(e) => setTicketForm({...ticketForm, reportedBy: e.target.value})} />
+            </div>
+            <Button className="w-full !py-3" disabled={!ticketForm.detail.trim() || !ticketForm.reportedBy.trim()} onClick={handleCreateMaintenanceTicket}>
+              <Wrench size={18} /> Generar ticket
             </Button>
           </div>
         </Modal>
