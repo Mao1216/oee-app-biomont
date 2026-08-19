@@ -6,9 +6,16 @@ import {
 import {
   LayoutDashboard, ClipboardList, CheckSquare, Activity, History, Bot, Settings,
   LogOut, Bell, User, Play, Pause, AlertTriangle, AlertOctagon, Wrench, CheckCircle,
-  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare, Upload
+  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare, Upload, Users
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+
+const BiomontLogo = ({ className = '' }) => (
+  <svg viewBox="0 0 220 82" role="img" aria-label="Biomont" className={className}>
+    <ellipse cx="110" cy="41" rx="106" ry="36" fill="#e30613" stroke="white" strokeWidth="3" />
+    <text x="110" y="56" textAnchor="middle" fill="white" fontSize="48" fontWeight="700" fontFamily="Arial, sans-serif">Biomont</text>
+  </svg>
+);
 
 const COLORS = {
   success: '#10b981', // emerald-500
@@ -27,6 +34,12 @@ const getOEEColor = (value) => {
 // Dummy Data
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
+const OPERATORS = [
+  { id: "OP-042", name: "Carlos Mendoza" },
+  { id: "OP-051", name: "María Torres" },
+  { id: "OP-063", name: "José Ramírez" },
+  { id: "OP-078", name: "Lucía Flores" }
+];
 
 const WORK_ORDERS = [
   { id: "OT-2026-0801", product: "Paracetamol 500mg Blister", line: "Línea Empaque 1", machine: "Blistera B-01", plannedQty: 50000, status: "pending", date: "2026-08-18" },
@@ -131,6 +144,7 @@ export default function OEEApplication() {
   const [records, setRecords] = useState([]);
   const [workOrders, setWorkOrders] = useState(WORK_ORDERS);
   const [importMessage, setImportMessage] = useState('');
+  const [operatorAssignments, setOperatorAssignments] = useState({});
   const workOrdersFileInputRef = useRef(null);
   
   // Active Operator Session State
@@ -202,6 +216,11 @@ export default function OEEApplication() {
     }
   };
 
+  const assignOperator = (order, operatorId) => {
+    const assignmentKey = `${order.id}-${order.line}`;
+    setOperatorAssignments(current => ({ ...current, [assignmentKey]: operatorId }));
+  };
+
   // Helper to calculate active session OEE
   const calculateSessionMetrics = (session) => {
     if (!session) return { a: 0, p: 0, q: 0, oee: 0 };
@@ -244,8 +263,8 @@ export default function OEEApplication() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl overflow-hidden">
           <div className="p-8 bg-blue-600 text-center">
-            <Activity className="w-16 h-16 text-white mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-white">PharmaOEE Connect</h1>
+            <BiomontLogo className="w-52 h-auto mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-white">BIOEE</h1>
             <p className="text-blue-100 mt-2">Sistema de Gestión y Medición de OEE</p>
           </div>
           <div className="p-8 space-y-6">
@@ -485,6 +504,56 @@ export default function OEEApplication() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+
+  const OperatorsView = () => (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-800">Operarios</h2>
+        <p className="text-slate-500">Asigna el operario responsable a cada línea de trabajo de una OT.</p>
+      </div>
+
+      <Card>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
+                <th className="p-4 font-semibold">Código OT</th>
+                <th className="p-4 font-semibold">Línea de trabajo</th>
+                <th className="p-4 font-semibold">Máquina</th>
+                <th className="p-4 font-semibold">Operario responsable</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workOrders.map((order) => {
+                const assignmentKey = `${order.id}-${order.line}`;
+                return (
+                  <tr key={assignmentKey} className="border-b border-slate-100 last:border-0">
+                    <td className="p-4 font-medium text-slate-800">{order.id}</td>
+                    <td className="p-4 text-slate-700">{order.line}</td>
+                    <td className="p-4 text-slate-600">{order.machine}</td>
+                    <td className="p-4">
+                      <select
+                        value={operatorAssignments[assignmentKey] || ''}
+                        onChange={(event) => assignOperator(order, event.target.value)}
+                        className="w-full min-w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="">Selecciona un operario</option>
+                        {OPERATORS.map((operator) => (
+                          <option key={operator.id} value={operator.id}>
+                            {operator.name} · {operator.id}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1018,15 +1087,16 @@ export default function OEEApplication() {
       {/* Sidebar */}
       <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-slate-900 text-slate-300 flex flex-col transition-all duration-300 z-50 shadow-xl`}>
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950">
-          {isSidebarOpen && <span className="font-bold text-lg text-white tracking-tight flex items-center gap-2"><Activity className="text-blue-500"/> PharmaOEE</span>}
+          {isSidebarOpen && <span className="font-bold text-lg text-white tracking-tight flex items-center gap-2"><BiomontLogo className="w-24 h-auto" /> <span>BIOEE</span></span>}
           <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-slate-800 rounded">
-            {isSidebarOpen ? <X size={20} /> : <Activity size={24} className="text-blue-500" />}
+            {isSidebarOpen ? <X size={20} /> : <BiomontLogo className="w-10 h-auto" />}
           </button>
         </div>
         
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
+          <SidebarItem icon={Users} label="Operarios" viewId="operators" />
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
           {role === 'supervisor' && <SidebarItem icon={History} label="Historial" viewId="history" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
@@ -1076,6 +1146,7 @@ export default function OEEApplication() {
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
             {currentView === 'work_orders' && <WorkOrdersView />}
+            {currentView === 'operators' && <OperatorsView />}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
             {currentView === 'ai' && <AIAssistantView />}
