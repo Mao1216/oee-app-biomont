@@ -323,7 +323,7 @@ export default function OEEApplication() {
     );
   }
 
-  const SidebarItem = ({ icon: Icon, label, viewId, requiredRole }) => {
+  const SidebarItem = ({ icon: Icon, label, viewId, requiredRole }: { icon: React.ElementType; label: string; viewId: string; requiredRole?: string }) => {
     if (requiredRole && requiredRole !== role && role !== 'admin') return null;
     const isActive = currentView === viewId;
     return (
