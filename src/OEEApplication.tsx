@@ -971,7 +971,7 @@ export default function OEEApplication() {
       if (!observationComment.trim()) return;
       const meeting = { code: `REU-${Date.now().toString().slice(-6)}`, attendee: 'Juanito', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString() };
       setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'observed', observationComment, correctionMeeting: meeting } : record));
-      setWorkOrders(current => current.map(order => order.id === selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'observed' } : order));
+      setWorkOrders(current => current.map(order => order.id === (selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')) ? { ...order, status: 'observed' } : order));
       setObservationComment('');
       setObservationModalOpen(false);
       setSelectedRecord(null);
@@ -980,14 +980,14 @@ export default function OEEApplication() {
 
     const approveRecord = () => {
       setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'validated' } : record));
-      setWorkOrders(current => current.map(order => order.id === selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'validated' } : order));
+      setWorkOrders(current => current.map(order => order.id === (selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')) ? { ...order, status: 'validated' } : order));
       setSelectedRecord(null);
     };
 
     const StatusList = ({ title, records: statusRecords, variant, emptyMessage, selectable = false }) => (
       <Card>
         <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between"><h3 className="font-bold text-slate-800">{title}</h3><Badge variant={variant}>{statusRecords.length}</Badge></div>
-        {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}>Revisar</Button>}</li>)}</ul>}
+        {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.workOrderId || record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}>Revisar</Button>}</li>)}</ul>}
       </Card>
     );
 
