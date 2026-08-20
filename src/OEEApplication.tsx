@@ -31,11 +31,26 @@ const getOEEColor = (value) => {
   return COLORS.critical;
 };
 
+const timeToMinutes = (time) => {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return 0;
+  const [hours, minutes] = time.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+const elapsedMinutes = (start, end) => {
+  if (!start || !end) return 0;
+  let difference = timeToMinutes(end) - timeToMinutes(start);
+  if (difference < 0) difference += 24 * 60;
+  return difference;
+};
+
+const currentTimeInput = () => new Date().toTimeString().slice(0, 5);
+
 // Dummy Data
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
 const RESPONSIBLE_OPERATORS = [{ id: "RESP-001", name: "Juanito" }];
-const OPERATORS = [
+const SUPPORT_OPERATORS = [
   { id: "OP-042", name: "Carlos Mendoza" },
   { id: "OP-051", name: "María Torres" },
   { id: "OP-063", name: "José Ramírez" },
@@ -162,7 +177,6 @@ export default function OEEApplication() {
   const [records, setRecords] = useState([]);
   const [workOrders, setWorkOrders] = useState(WORK_ORDERS);
   const [importMessage, setImportMessage] = useState('');
-  const [operatorAssignments, setOperatorAssignments] = useState({});
   const [responsibleAssignments, setResponsibleAssignments] = useState({});
   const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', product: '', line: '', quantity: '', status: '', responsible: '' });
   const workOrdersFileInputRef = useRef(null);
@@ -240,14 +254,6 @@ export default function OEEApplication() {
     }
   };
 
-  const assignOperator = (order, operatorId) => {
-    const assignmentKey = `${order.id}-${order.line}`;
-    setOperatorAssignments(current => ({ ...current, [assignmentKey]: operatorId }));
-    if (operatorId) {
-      setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: 'in_progress' } : workOrder));
-    }
-  };
-
   const assignResponsibleOperator = (order, operatorId) => {
     setResponsibleAssignments(current => ({ ...current, [order.id]: operatorId }));
     setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: operatorId ? 'assigned' : 'pending_assignment' } : workOrder));
@@ -269,14 +275,13 @@ export default function OEEApplication() {
     const operatingTime = plannedTimeMin - availLoss;
     const availability = plannedTimeMin > 0 ? (operatingTime / plannedTimeMin) * 100 : 0;
 
-    // Rendimiento: compara la velocidad informada con el estándar de la máquina
-    // y descuenta las microparadas del tiempo operativo para obtener la velocidad efectiva.
+    // La velocidad real se obtiene de la producción y del horario ingresado por el operario.
     const standardSpeed = session.standardSpeed || 100;
-    const reportedSpeed = session.actualSpeed || standardSpeed;
-    const microStopMinutes = perfLoss;
-    const effectiveSpeed = operatingTime > 0
-      ? reportedSpeed * Math.max(0, operatingTime - microStopMinutes) / operatingTime
+    const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
+    const reportedSpeed = processMinutes > 0 && session.realQty > 0
+      ? session.realQty / processMinutes
       : 0;
+    const effectiveSpeed = reportedSpeed;
     const performance = standardSpeed > 0 ? (effectiveSpeed / standardSpeed) * 100 : 0;
 
     // Quality
@@ -291,10 +296,11 @@ export default function OEEApplication() {
       oee: Math.max(0, Math.min(100, oee)),
       operatingTime,
       availLoss,
-      microStopMinutes,
+      microStopMinutes: perfLoss,
       standardSpeed,
       reportedSpeed,
-      effectiveSpeed
+      effectiveSpeed,
+      processMinutes
     };
   };
 
@@ -503,10 +509,12 @@ export default function OEEApplication() {
                           <option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
                         </select>
                       ) : (
-                        <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status !== 'in_progress'} onClick={() => {
-                          setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, losses: [], standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100, actualSpeed: 0, startTime: new Date().toLocaleTimeString(), plannedTime: 480});
+                        <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'pending_assignment'} onClick={() => {
+                          const now = currentTimeInput();
+                          setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, losses: [], supportOperators: [], standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100, processStart: now, processEnd: now, performanceEndTime: now, plannedTime: 480});
+                          setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress' } : order));
                           setCurrentView('active_production');
-                        }}>{ot.status === 'in_progress' ? 'Iniciar OT' : 'Asignar operarios primero'} <ArrowRight size={16} /></Button>
+                        }}>Registrar OEE <ArrowRight size={16} /></Button>
                       )}
                     </td>
                   </tr>
@@ -519,77 +527,56 @@ export default function OEEApplication() {
       </div>
     );
   };
-
-
-
-  const OperatorsView = () => (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800">Operarios</h2>
-        <p className="text-slate-500">Asigna los operarios de producción a las líneas de las OT que tienes a cargo.</p>
-      </div>
-
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
-                <th className="p-4 font-semibold">Código OT</th>
-                <th className="p-4 font-semibold">Línea de trabajo</th>
-                <th className="p-4 font-semibold">Máquina</th>
-                <th className="p-4 font-semibold">Operario responsable</th>
-              </tr>
-            </thead>
-            <tbody>
-              {workOrders.filter((order) => responsibleAssignments[order.id] === 'RESP-001').map((order) => {
-                const assignmentKey = `${order.id}-${order.line}`;
-                return (
-                  <tr key={assignmentKey} className="border-b border-slate-100 last:border-0">
-                    <td className="p-4 font-medium text-slate-800">{order.id}</td>
-                    <td className="p-4 text-slate-700">{order.line}</td>
-                    <td className="p-4 text-slate-600">{order.machine}</td>
-                    <td className="p-4">
-                      <select
-                        value={operatorAssignments[assignmentKey] || ''}
-                        onChange={(event) => assignOperator(order, event.target.value)}
-                        className="w-full min-w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      >
-                        <option value="">Selecciona un operario</option>
-                        {OPERATORS.map((operator) => (
-                          <option key={operator.id} value={operator.id}>
-                            {operator.name} · {operator.id}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        {workOrders.filter((order) => responsibleAssignments[order.id] === 'RESP-001').length === 0 && (
-          <p className="p-6 text-center text-slate-500">El supervisor debe asignarte una OT antes de registrar operarios.</p>
-        )}
-      </Card>
-    </div>
-  );
-
   const ActiveProductionView = () => {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
-    const [lossForm, setLossForm] = useState({ cause: '', duration: '', qty: '', speed: '', comment: '' });
+    const [lossForm, setLossForm] = useState({ cause: '', duration: '', qty: '', speed: '', speedEndTime: '', comment: '' });
     
     const [qtyModalOpen, setQtyModalOpen] = useState(false);
     const [qtyForm, setQtyForm] = useState({ produced: '' });
     const [ticketModalOpen, setTicketModalOpen] = useState(false);
     const [maintenanceTicket, setMaintenanceTicket] = useState(null);
     const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
+    const [supportModalOpen, setSupportModalOpen] = useState(false);
+    const [sharedSupportHours, setSharedSupportHours] = useState('');
 
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
     const metrics = calculateSessionMetrics(activeSession);
     const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
+
+    const updateProcessTime = (field, value) => {
+      setActiveSession(current => current ? { ...current, [field]: value } : current);
+    };
+
+    const toggleSupportOperator = (operator) => {
+      setActiveSession(current => {
+        if (!current) return current;
+        const selected = current.supportOperators || [];
+        const exists = selected.some(item => item.id === operator.id);
+        return {
+          ...current,
+          supportOperators: exists
+            ? selected.filter(item => item.id !== operator.id)
+            : [...selected, { ...operator, hours: '' }]
+        };
+      });
+    };
+
+    const updateSupportHours = (operatorId, hours) => {
+      setActiveSession(current => current ? {
+        ...current,
+        supportOperators: current.supportOperators.map(item => item.id === operatorId ? { ...item, hours } : item)
+      } : current);
+    };
+
+    const applySharedSupportHours = () => {
+      if (!sharedSupportHours) return;
+      setActiveSession(current => current ? {
+        ...current,
+        supportOperators: current.supportOperators.map(item => ({ ...item, hours: sharedSupportHours }))
+      } : current);
+    };
 
     const handleCreateMaintenanceTicket = () => {
       const date = new Date();
@@ -605,14 +592,18 @@ export default function OEEApplication() {
     };
 
     const handleAddLoss = () => {
+      const speedDuration = lossType === 'performance'
+        ? elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime)
+        : parseInt(lossForm.duration) || 0;
       const newLoss = {
         id: Date.now(),
         category: lossType,
         cause: lossForm.cause,
-        duration: parseInt(lossForm.duration) || 0,
+        duration: speedDuration,
         qty: parseInt(lossForm.qty) || 0,
         comment: lossForm.comment,
-        speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.actualSpeed || activeSession.standardSpeed) : 0,
+        speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.standardSpeed) : 0,
+        speedEndTime: lossType === 'performance' ? lossForm.speedEndTime : null,
         ticketCode: requiresMaintenanceTicket ? maintenanceTicket?.code : null,
         ticket: requiresMaintenanceTicket ? maintenanceTicket : null,
         time: new Date().toLocaleTimeString()
@@ -621,14 +612,14 @@ export default function OEEApplication() {
       setActiveSession({
         ...activeSession,
         losses: [...activeSession.losses, newLoss],
-        actualSpeed: lossType === 'performance' ? newLoss.speed : activeSession.actualSpeed,
+        performanceEndTime: lossType === 'performance' ? lossForm.speedEndTime : activeSession.performanceEndTime,
         // Los rechazos se registran únicamente como pérdida de calidad.
         rejectQty: lossType === 'quality' ? activeSession.rejectQty + newLoss.qty : activeSession.rejectQty,
         realQty: lossType === 'quality' ? activeSession.realQty + newLoss.qty : activeSession.realQty,
       });
       
       setLossModalOpen(false);
-      setLossForm({ cause: '', duration: '', qty: '', speed: '', comment: '' });
+      setLossForm({ cause: '', duration: '', qty: '', speed: '', speedEndTime: '', comment: '' });
       setMaintenanceTicket(null);
       setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     };
@@ -676,11 +667,20 @@ export default function OEEApplication() {
           <div className="flex gap-6 text-sm">
             <div className="text-center">
               <p className="text-slate-400">Operador</p>
-              <p className="font-semibold">{activeSession.operator}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-semibold">{activeSession.operator}</p>
+                <button onClick={() => setSupportModalOpen(true)} title="Registrar operarios de apoyo" className="rounded-full bg-slate-700 p-1.5 text-blue-200 hover:bg-slate-600 hover:text-white">
+                  <Users size={16} />
+                </button>
+              </div>
             </div>
             <div className="text-center">
-              <p className="text-slate-400">Inicio</p>
-              <p className="font-semibold">{activeSession.startTime}</p>
+              <p className="text-slate-400">Horario del proceso</p>
+              <div className="flex items-center gap-2 text-slate-900">
+                <input aria-label="Hora de inicio del proceso" type="time" value={activeSession.processStart} onChange={(event) => updateProcessTime('processStart', event.target.value)} className="w-24 rounded bg-white px-2 py-1 text-sm font-semibold" />
+                <span className="text-slate-400">a</span>
+                <input aria-label="Hora de finalización del proceso" type="time" value={activeSession.processEnd} onChange={(event) => updateProcessTime('processEnd', event.target.value)} className="w-24 rounded bg-white px-2 py-1 text-sm font-semibold" />
+              </div>
             </div>
             <div className="text-center hidden md:block">
               <p className="text-slate-400">Planificado</p>
@@ -688,6 +688,16 @@ export default function OEEApplication() {
             </div>
           </div>
         </div>
+
+        <Card className="p-4 bg-blue-50 border-blue-100">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="font-semibold text-slate-800">Velocidad real calculada</p>
+              <p className="text-sm text-slate-600">Se calcula automáticamente con las unidades producidas y la hora de inicio/finalización.</p>
+            </div>
+            <p className="text-2xl font-bold text-blue-700">{metrics.effectiveSpeed.toFixed(1)} <span className="text-sm font-medium">und/min</span></p>
+          </div>
+        </Card>
 
         {/* Real-time KPI Dashboard */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -790,7 +800,7 @@ export default function OEEApplication() {
                       </div>
                     </div>
                     <div className="text-right">
-                      {loss.duration > 0 && <p className="font-bold text-slate-800">{loss.duration} min</p>}
+                      {loss.category === 'performance' ? <><p className="font-bold text-purple-700">{loss.speed} und/min</p><p className="text-sm text-slate-600">{(loss.duration / 60).toFixed(2)} h hasta {loss.speedEndTime}</p></> : loss.duration > 0 && <p className="font-bold text-slate-800">{loss.duration} min</p>}
                       {loss.qty > 0 && <p className="font-bold text-rose-600">{loss.qty} und</p>}
                     </div>
                   </li>
@@ -809,6 +819,32 @@ export default function OEEApplication() {
         </div>
 
         {/* Modals */}
+        <Modal isOpen={supportModalOpen} onClose={() => setSupportModalOpen(false)} title="Registrar operarios de apoyo">
+          <div className="space-y-5">
+            <p className="text-sm text-slate-600">Selecciona uno o varios operarios de apoyo e indica cuántas horas participaron en el proceso.</p>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <label className="block text-sm font-semibold text-blue-900">Asignar las mismas horas a todos</label>
+              <div className="mt-2 flex gap-2">
+                <input type="number" min="0" step="0.25" placeholder="Horas" value={sharedSupportHours} onChange={(event) => setSharedSupportHours(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" />
+                <Button variant="secondary" className="!px-3 !py-2" disabled={!sharedSupportHours || activeSession.supportOperators.length === 0} onClick={applySharedSupportHours}>Aplicar</Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {SUPPORT_OPERATORS.map(operator => {
+                const selected = activeSession.supportOperators.find(item => item.id === operator.id);
+                return (
+                  <div key={operator.id} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
+                    <input aria-label={`Seleccionar ${operator.name}`} type="checkbox" checked={Boolean(selected)} onChange={() => toggleSupportOperator(operator)} className="h-4 w-4" />
+                    <div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{operator.name}</p><p className="text-xs text-slate-500">{operator.id}</p></div>
+                    <input aria-label={`Horas de ${operator.name}`} type="number" min="0" step="0.25" placeholder="Horas" disabled={!selected} value={selected?.hours || ''} onChange={(event) => updateSupportHours(operator.id, event.target.value)} className="w-24 rounded-lg border border-slate-300 p-2 disabled:bg-slate-100" />
+                  </div>
+                );
+              })}
+            </div>
+            <Button className="w-full" onClick={() => setSupportModalOpen(false)}>Guardar operarios de apoyo</Button>
+          </div>
+        </Modal>
+
         <Modal isOpen={lossModalOpen} onClose={() => setLossModalOpen(false)} title={`Registrar Pérdida de ${lossType === 'availability' ? 'Disponibilidad' : lossType === 'performance' ? 'Rendimiento' : 'Calidad'}`}>
           <div className="space-y-4">
             <div>
@@ -828,13 +864,13 @@ export default function OEEApplication() {
             {lossType === 'performance' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
                 <p className="font-semibold">Velocidad estándar definida: {activeSession.standardSpeed} und/min</p>
-                <p className="mt-1 text-purple-700">La velocidad real y las microparadas determinan el factor de rendimiento.</p>
+                <p className="mt-1 text-purple-700">La duración se calcula desde {activeSession.performanceEndTime || activeSession.processStart} hasta la hora final registrada.</p>
               </div>
             )}
 
             {lossType === 'performance' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Velocidad promedio real (und/min)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Velocidad de la máquina (und/min)</label>
                 <input
                   type="number" min="0" step="0.1" placeholder={`Estándar: ${activeSession.standardSpeed}`}
                   className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-purple-500 focus:ring-purple-500 text-lg"
@@ -843,9 +879,17 @@ export default function OEEApplication() {
               </div>
             )}
 
-            {lossType !== 'quality' && (
+            {lossType === 'performance' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'performance' ? 'Tiempo total de microparadas (minutos)' : 'Duración (minutos)'}</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Hora de finalización de velocidad</label>
+                <input type="time" className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-purple-500 focus:ring-purple-500 text-lg" value={lossForm.speedEndTime} onChange={(e) => setLossForm({...lossForm, speedEndTime: e.target.value})} />
+                {lossForm.speedEndTime && <p className="mt-1 text-sm text-purple-700">Horas de velocidad: {(elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) / 60).toFixed(2)} h</p>}
+              </div>
+            )}
+
+            {lossType === 'availability' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Duración (minutos)</label>
                 <input 
                   type="number" min="1"
                   className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500 text-lg"
@@ -896,7 +940,7 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || (lossType !== 'quality' && !lossForm.duration) || (lossType === 'performance' && !lossForm.speed) || (lossType === 'quality' && !lossForm.qty) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={!lossForm.cause || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && !lossForm.qty) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               Registrar Pérdida
@@ -1107,7 +1151,6 @@ export default function OEEApplication() {
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
-          {role === 'responsible_operator' && <SidebarItem icon={Users} label="Operarios" viewId="operators" />}
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
         </div>
@@ -1156,7 +1199,6 @@ export default function OEEApplication() {
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
             {currentView === 'work_orders' && <WorkOrdersView />}
-            {currentView === 'operators' && <OperatorsView />}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
             {currentView === 'ai' && <AIAssistantView />}
