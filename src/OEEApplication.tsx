@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell, ComposedChart
+  LineChart, Line, PieChart, Pie, Cell, ComposedChart, ScatterChart, Scatter, ReferenceLine
 } from 'recharts';
 import {
   LayoutDashboard, ClipboardList, CheckSquare, Activity, History, Bot, Settings,
   LogOut, Bell, User, Play, Pause, AlertTriangle, AlertOctagon, Wrench, CheckCircle,
-  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare, Upload, Users
+  ChevronRight, ArrowRight, Save, Send, Edit, X, Plus, Search, Filter, MessageSquare, Upload, Users,
+  Eye, Download, Scale, PackageMinus, Trash2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -46,11 +47,10 @@ const elapsedMinutes = (start, end) => {
 
 const currentTimeInput = () => new Date().toTimeString().slice(0, 5);
 
-// Dummy Data
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
 const RESPONSIBLE_OPERATORS = [{ id: "RESP-001", name: "Juanito" }];
-const SUPPORT_OPERATORS = [
+const INITIAL_SUPPORT_OPERATORS = [
   { id: "OP-042", name: "Carlos Mendoza" },
   { id: "OP-051", name: "María Torres" },
   { id: "OP-063", name: "José Ramírez" },
@@ -60,12 +60,6 @@ const DEMO_CREDENTIALS = {
   supervisor: { username: "molin", password: "password", name: "Molin" },
   responsible_operator: { username: "Juanito", password: "password", name: "Juanito" }
 };
-
-const WORK_ORDERS = [
-  { id: "OT-2026-0801", product: "Paracetamol 500mg Blister", line: "Línea Empaque 1", machine: "Blistera B-01", plannedQty: 50000, status: "pending_assignment", date: "2026-08-18" },
-  { id: "OT-2026-0802", product: "Ibuprofeno 400mg Frasco", line: "Línea Líquidos 2", machine: "Llenadora L-02", plannedQty: 15000, status: "pending_assignment", date: "2026-08-18" },
-  { id: "OT-2026-0803", product: "Amoxicilina 250mg Susp", line: "Línea Polvos 1", machine: "Dosificadora P-01", plannedQty: 8000, status: "pending_assignment", date: "2026-08-19" },
-];
 
 const WORK_ORDER_STATUS: Record<string, { label: string; variant: BadgeVariant }> = {
   pending_assignment: { label: 'Pendiente de asignar', variant: 'warning' },
@@ -87,25 +81,8 @@ const LOSS_CAUSES = {
   performance: ["Microparada de máquina", "Microparada de línea", "Atasco de material", "Ajuste menor"],
   quality: ["Blister mal sellado", "Falta de lote/vencimiento", "Volumen incorrecto", "Contaminación cruzada"]
 };
-
-const CHART_DATA_TREND = [
-  { day: 'Lun', oee: 82, a: 90, p: 95, q: 96 },
-  { day: 'Mar', oee: 78, a: 85, p: 94, q: 97 },
-  { day: 'Mie', oee: 86, a: 92, p: 96, q: 98 },
-  { day: 'Jue', oee: 81, a: 88, p: 95, q: 97 },
-  { day: 'Vie', oee: 88, a: 95, p: 95, q: 98 },
-  { day: 'Sab', oee: 72, a: 80, p: 92, q: 98 },
-];
-
-const CHART_DATA_PARETO = [
-  { cause: 'Cambio formato', minutes: 120, cumulative: 30 },
-  { cause: 'Avería Mecánica', minutes: 80, cumulative: 50 },
-  { cause: 'Limpieza', minutes: 60, cumulative: 65 },
-  { cause: 'Microparadas', minutes: 45, cumulative: 76 },
-  { cause: 'Falta Material', minutes: 40, cumulative: 86 },
-  { cause: 'Ajustes', minutes: 30, cumulative: 93 },
-  { cause: 'Otros', minutes: 25, cumulative: 100 },
-];
+const CHART_DATA_TREND = [];
+const CHART_DATA_PARETO = [];
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
 type BadgeVariant = 'default' | 'success' | 'warning' | 'critical' | 'primary';
@@ -166,6 +143,30 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose:
   );
 };
 
+const TimeField = ({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) => {
+  const [hour = '00', minute = '00'] = (value || '00:00').split(':');
+  const update = (nextHour: string, nextMinute: string) => onChange(`${nextHour}:${nextMinute}`);
+  return (
+    <div className="min-w-44">
+      <label className="mb-1 block text-xs font-medium text-slate-400">{label}</label>
+      <div className="flex items-center gap-1 rounded-lg border border-slate-500 bg-white p-1 text-slate-900 shadow-inner">
+        <select aria-label={`${label}: hora`} value={hour} onChange={(event) => update(event.target.value, minute)} className="w-full rounded border-0 bg-transparent px-2 py-1.5 font-semibold outline-none">
+          {Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0')).map(option => <option key={option}>{option}</option>)}
+        </select>
+        <span className="font-bold text-slate-400">:</span>
+        <select aria-label={`${label}: minutos`} value={minute} onChange={(event) => update(hour, event.target.value)} className="w-full rounded border-0 bg-transparent px-2 py-1.5 font-semibold outline-none">
+          {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0')).map(option => <option key={option}>{option}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+};
+
+const RecordDetails = ({ record, metrics }: { record: any; metrics: any; readOnly?: boolean }) => {
+  if (!record || !metrics) return null;
+  return <div className="space-y-5"><div className="grid grid-cols-2 gap-4"><div><p className="text-xs text-slate-500">OT</p><p className="font-bold">{record.workOrderId || record.id}</p></div><div><p className="text-xs text-slate-500">Producto</p><p className="font-bold">{record.product}</p></div><div><p className="text-xs text-slate-500">Máquina</p><p className="font-semibold">{record.machine}</p></div><div><p className="text-xs text-slate-500">Operario</p><p className="font-semibold">{record.operator || 'Pendiente'}</p></div></div><div className="grid grid-cols-4 gap-2">{[['OEE',metrics.oee],['Disp.',metrics.a],['Rend.',metrics.p],['Calidad',metrics.q]].map(([label,value]) => <div key={label} className="rounded-lg bg-slate-50 p-3 text-center"><p className="text-xs text-slate-500">{label}</p><p className="font-bold">{Number(value).toFixed(1)}%</p></div>)}</div><div className="rounded-lg border border-slate-200 p-4 text-sm"><p><strong>Horario manual:</strong> {record.processStart || '--:--'} a {record.processEnd || '--:--'}</p><p className="mt-1"><strong>Producción:</strong> {Number(record.realQty || 0).toLocaleString()} und · <strong>Velocidad estándar:</strong> {Number(record.standardSpeed || 0)} und/min</p><p className="mt-1"><strong>Eventos:</strong> {(record.losses || []).length} · <strong>Sobrepesos:</strong> {(record.overweights || []).length} · <strong>Descartes:</strong> {(record.materialDiscards || []).length}</p></div></div>;
+};
+
 export default function OEEApplication() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null); // 'supervisor', 'responsible_operator'
@@ -175,11 +176,13 @@ export default function OEEApplication() {
   
   // App Data State
   const [records, setRecords] = useState([]);
-  const [workOrders, setWorkOrders] = useState(WORK_ORDERS);
+  const [workOrders, setWorkOrders] = useState([]);
   const [importMessage, setImportMessage] = useState('');
   const [responsibleAssignments, setResponsibleAssignments] = useState({});
   const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', product: '', line: '', quantity: '', status: '', responsible: '' });
   const workOrdersFileInputRef = useRef(null);
+  const [selectedLiveOrder, setSelectedLiveOrder] = useState(null);
+  const [dashboardProduct, setDashboardProduct] = useState('');
   
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(null);
@@ -236,6 +239,7 @@ export default function OEEApplication() {
           line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
           machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
           plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
+          standardSpeed: parsePlannedQuantity(getImportValue(row, ['Velocidad estándar', 'Velocidad estandar', 'Velocidad estándar (und/min)', 'Velocidad', 'Standard speed'])),
           status: 'pending_assignment',
           date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
         };
@@ -254,6 +258,17 @@ export default function OEEApplication() {
     }
   };
 
+  const downloadWorkOrderTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([{
+      'Código OT': '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
+      'Velocidad estándar (und/min)': '', Fecha: ''
+    }]);
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 14 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Ordenes OT');
+    XLSX.writeFile(workbook, 'Plantilla_Ordenes_OT_Biomont.xlsx');
+  };
+
   const assignResponsibleOperator = (order, operatorId) => {
     setResponsibleAssignments(current => ({ ...current, [order.id]: operatorId }));
     setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: operatorId ? 'assigned' : 'pending_assignment' } : workOrder));
@@ -263,7 +278,8 @@ export default function OEEApplication() {
   const calculateSessionMetrics = (session) => {
     if (!session) return { a: 0, p: 0, q: 0, oee: 0 };
     
-    const plannedTimeMin = session.plannedTime || 480; // 8 hours default
+    const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
+    const plannedTimeMin = processMinutes;
     
     // Calculate total lost time by type
     let availLoss = 0, perfLoss = 0;
@@ -272,20 +288,23 @@ export default function OEEApplication() {
       if (l.category === 'performance') perfLoss += parseInt(l.duration);
     });
 
-    const operatingTime = plannedTimeMin - availLoss;
+    const operatingTime = Math.max(0, plannedTimeMin - availLoss);
     const availability = plannedTimeMin > 0 ? (operatingTime / plannedTimeMin) * 100 : 0;
 
     // La velocidad real se obtiene de la producción y del horario ingresado por el operario.
-    const standardSpeed = session.standardSpeed || 100;
-    const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
-    const reportedSpeed = processMinutes > 0 && session.realQty > 0
-      ? session.realQty / processMinutes
+    const standardSpeed = Number(session.standardSpeed) || 0;
+    const speedSegments = session.losses.filter(loss => loss.category === 'performance' && loss.duration > 0 && loss.speed > 0);
+    const speedMinutes = speedSegments.reduce((total, segment) => total + Number(segment.duration), 0);
+    const weightedSpeed = speedMinutes > 0
+      ? speedSegments.reduce((total, segment) => total + Number(segment.speed) * Number(segment.duration), 0) / speedMinutes
       : 0;
-    const effectiveSpeed = reportedSpeed;
+    const reportedSpeed = operatingTime > 0 && session.realQty > 0 ? session.realQty / operatingTime : 0;
+    const effectiveSpeed = weightedSpeed || reportedSpeed;
     const performance = standardSpeed > 0 ? (effectiveSpeed / standardSpeed) * 100 : 0;
 
     // Quality
-    const quality = session.realQty > 0 ? (session.goodQty / session.realQty) * 100 : 0;
+    const goodQty = Math.max(0, Number(session.realQty) - Number(session.rejectQty || 0));
+    const quality = session.realQty > 0 ? (goodQty / session.realQty) * 100 : 0;
 
     const oee = (availability/100) * (performance/100) * (quality/100) * 100;
 
@@ -345,7 +364,7 @@ export default function OEEApplication() {
     );
   };
 
-  const DashboardView = () => (
+  const LegacyDashboardView = () => (
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -443,6 +462,57 @@ export default function OEEApplication() {
     </div>
   );
 
+  const DashboardView = () => {
+    const liveRecord = activeSession ? { ...activeSession, id: `LIVE-${activeSession.id}`, date: new Date().toISOString().slice(0, 10), metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
+    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const average = (key) => sourceRecords.length ? sourceRecords.reduce((sum, record) => sum + Number(record.metrics?.[key] || 0), 0) / sourceRecords.length : 0;
+    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
+    const qualitySummary = sourceRecords.reduce((summary, record) => ({
+      reprocess: summary.reprocess + Number(record.reprocessQty || 0),
+      waste: summary.waste + Number(record.wasteQty || 0),
+      produced: summary.produced + Number(record.realQty || 0)
+    }), { reprocess: 0, waste: 0, produced: 0 });
+    const materialSummary = sourceRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
+      const key = `${item.type}|${item.unit}`;
+      summary[key] = (summary[key] || 0) + Number(item.quantity || 0);
+      return summary;
+    }, {});
+    const trendData = sourceRecords.map(record => ({ name: record.workOrderId || record.id, oee: Number(record.metrics?.oee || 0), a: Number(record.metrics?.a || 0), p: Number(record.metrics?.p || 0), q: Number(record.metrics?.q || 0) }));
+    const lossMap = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability').reduce((map, loss) => {
+      map[loss.cause] = (map[loss.cause] || 0) + Number(loss.duration || 0);
+      return map;
+    }, {});
+    const paretoData = Object.entries(lossMap).map(([cause, minutes]) => ({ cause, minutes }));
+    const overweightData = sourceRecords.filter(record => !dashboardProduct || record.product === dashboardProduct).flatMap(record => (record.overweights || []).map((item, index) => ({
+      sequence: `${record.workOrderId || record.id}-${index + 1}`, weight: Number(item.weight), quantity: Number(item.quantity), product: record.product
+    })));
+    const configuredTarget = sourceRecords.find(record => (!dashboardProduct || record.product === dashboardProduct) && Number(record.targetWeight) > 0)?.targetWeight;
+    const centralWeight = Number(configuredTarget) || (overweightData.length ? overweightData.reduce((sum, item) => sum + item.weight * item.quantity, 0) / overweightData.reduce((sum, item) => sum + item.quantity, 0) : 0);
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div><h2 className="text-2xl font-bold text-slate-800">Dashboard de Planta</h2><p className="text-slate-500">Indicadores calculados únicamente con OT cargadas y registros reales.</p></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-500">Filtrar sobrepeso por producto</label><select className="min-w-64 rounded-lg border border-slate-300 bg-white p-2.5" value={dashboardProduct} onChange={(event) => setDashboardProduct(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div>
+        </div>
+        {sourceRecords.length === 0 ? <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Aún no hay datos productivos</h3><p className="mt-1 text-slate-500">Carga una plantilla de OT y registra una OEE para alimentar este dashboard.</p></Card> : <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[['OEE global', average('oee'), 'border-blue-500'], ['Disponibilidad', average('a'), 'border-amber-500'], ['Rendimiento', average('p'), 'border-purple-500'], ['Calidad', average('q'), 'border-emerald-500']].map(([label, value, border]) => <Card key={label} className={`border-l-4 ${border} p-5`}><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-3xl font-bold" style={{ color: label === 'OEE global' ? getOEEColor(Number(value)) : undefined }}>{Number(value).toFixed(1)}%</p></Card>)}
+          </div>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <Card className="p-6 xl:col-span-2"><h3 className="mb-5 font-bold text-slate-800">OEE por orden de trabajo</h3><div className="h-72"><ResponsiveContainer><LineChart data={trendData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name"/><YAxis domain={[0,100]}/><RechartsTooltip/><Legend/><Line dataKey="oee" name="OEE" stroke={COLORS.primary} strokeWidth={3}/><Line dataKey="a" name="Disponibilidad" stroke={COLORS.warning}/><Line dataKey="p" name="Rendimiento" stroke="#8b5cf6"/><Line dataKey="q" name="Calidad" stroke={COLORS.success}/></LineChart></ResponsiveContainer></div></Card>
+            <Card className="p-6"><h3 className="font-bold text-slate-800">Calidad registrada</h3><div className="mt-6 space-y-4"><div className="rounded-lg bg-slate-50 p-4"><p className="text-sm text-slate-500">Producción total</p><p className="text-2xl font-bold">{qualitySummary.produced.toLocaleString()} und</p></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg bg-amber-50 p-4 text-amber-800"><p className="text-sm">Reproceso</p><p className="text-xl font-bold">{qualitySummary.reprocess.toLocaleString()}</p></div><div className="rounded-lg bg-rose-50 p-4 text-rose-800"><p className="text-sm">Desperdicio</p><p className="text-xl font-bold">{qualitySummary.waste.toLocaleString()}</p></div></div></div></Card>
+          </div>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Pérdidas de disponibilidad reales</h3>{paretoData.length ? <div className="h-64"><ResponsiveContainer><BarChart data={paretoData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="cause" tick={{fontSize:10}}/><YAxis/><RechartsTooltip/><Bar dataKey="minutes" name="Minutos" fill={COLORS.critical}/></BarChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pérdidas registradas.</p>}</Card>
+            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Control de sobrepeso</h3>{overweightData.length ? <div className="h-64"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="sequence" name="Registro"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Promedio"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pesos registrados para el filtro.</p>}</Card>
+          </div>
+          <Card className="p-6"><h3 className="font-bold text-slate-800">Descarte de materiales para planificación</h3><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.keys(materialSummary).length ? Object.entries(materialSummary).map(([key, quantity]) => { const [type, unit] = key.split('|'); return <div key={key} className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Material de {type.toLowerCase()}</p><p className="text-2xl font-bold text-slate-800">{Number(quantity).toLocaleString()} <span className="text-sm font-medium">{unit}</span></p></div>; }) : <p className="text-slate-500">Sin descartes registrados.</p>}</div></Card>
+        </>}
+      </div>
+    );
+  };
+
   const WorkOrdersView = () => {
     const activeStatuses = ['pending_assignment', 'assigned', 'in_progress'];
     const normalized = (value) => String(value || '').toLowerCase();
@@ -469,6 +539,7 @@ export default function OEEApplication() {
             {role === 'supervisor' && (
               <>
                 <input ref={workOrdersFileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleWorkOrdersImport} />
+                <Button variant="secondary" className="!py-2" onClick={downloadWorkOrderTemplate}><Download size={18} /> Descargar plantilla</Button>
                 <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}><Upload size={18} /> Cargar Excel</Button>
               </>
             )}
@@ -483,7 +554,7 @@ export default function OEEApplication() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
-                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">{role === 'supervisor' ? 'Operario responsable' : 'Acción'}</th>
+                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">{role === 'supervisor' ? 'Operario responsable / Vista' : 'Acción'}</th>
                 </tr>
                 {role === 'supervisor' && (
                   <tr className="border-b border-slate-200 bg-white">
@@ -491,6 +562,7 @@ export default function OEEApplication() {
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
+                    <th className="p-2"></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.responsible} onChange={(e) => updateFilter('responsible', e.target.value)}><option value="">Todos</option><option value="Juanito">Juanito</option></select></th>
                   </tr>
@@ -502,16 +574,15 @@ export default function OEEApplication() {
                     <td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 text-slate-600">{ot.product}</td>
                     <td className="p-4"><div className="text-sm text-slate-800">{ot.line}</div><div className="text-xs text-slate-500">{ot.machine}</div></td>
                     <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
+                    <td className="p-4 font-semibold text-purple-700">{Number(ot.standardSpeed || 0).toLocaleString()} und/min</td>
                     <td className="p-4"><Badge variant={WORK_ORDER_STATUS[ot.status].variant}>{WORK_ORDER_STATUS[ot.status].label}</Badge></td>
                     <td className="p-4">
                       {role === 'supervisor' ? (
-                        <select className="w-full min-w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[ot.id] || ''} onChange={(event) => assignResponsibleOperator(ot, event.target.value)}>
-                          <option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
-                        </select>
+                        <div className="flex min-w-56 items-center gap-2"><select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[ot.id] || ''} onChange={(event) => assignResponsibleOperator(ot, event.target.value)}><option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
                       ) : (
                         <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'pending_assignment'} onClick={() => {
                           const now = currentTimeInput();
-                          setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, losses: [], supportOperators: [], standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100, processStart: now, processEnd: now, performanceEndTime: now, plannedTime: 480});
+                           setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: now, processEnd: now, performanceEndTime: ''});
                           setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress' } : order));
                           setCurrentView('active_production');
                         }}>Registrar OEE <ArrowRight size={16} /></Button>
@@ -519,18 +590,19 @@ export default function OEEApplication() {
                     </td>
                   </tr>
                 ))}
-                {visibleWorkOrders.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No hay OT que coincidan con los filtros.</td></tr>}
+                {visibleWorkOrders.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No hay OT cargadas. Descarga la plantilla y carga el Excel para comenzar.</td></tr>}
               </tbody>
             </table>
           </div>
         </Card>
+        <Modal isOpen={Boolean(selectedLiveOrder)} onClose={() => setSelectedLiveOrder(null)} title="Detalle OEE en tiempo real"><RecordDetails record={selectedLiveOrder} metrics={selectedLiveOrder ? calculateSessionMetrics(selectedLiveOrder) : null} readOnly /></Modal>
       </div>
     );
   };
   const ActiveProductionView = () => {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
-    const [lossForm, setLossForm] = useState({ cause: '', duration: '', qty: '', speed: '', speedEndTime: '', comment: '' });
+    const [lossForm, setLossForm] = useState({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
     
     const [qtyModalOpen, setQtyModalOpen] = useState(false);
     const [qtyForm, setQtyForm] = useState({ produced: '' });
@@ -539,6 +611,14 @@ export default function OEEApplication() {
     const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     const [supportModalOpen, setSupportModalOpen] = useState(false);
     const [sharedSupportHours, setSharedSupportHours] = useState('');
+    const [supportOperators, setSupportOperators] = useState(INITIAL_SUPPORT_OPERATORS);
+    const [supportDraft, setSupportDraft] = useState([]);
+    const [newSupportName, setNewSupportName] = useState('');
+    const [overweightModalOpen, setOverweightModalOpen] = useState(false);
+    const [overweightDraft, setOverweightDraft] = useState([{ weight: '', quantity: '' }]);
+    const [targetWeight, setTargetWeight] = useState('');
+    const [materialModalOpen, setMaterialModalOpen] = useState(false);
+    const [materialForm, setMaterialForm] = useState({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
 
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
@@ -549,33 +629,36 @@ export default function OEEApplication() {
       setActiveSession(current => current ? { ...current, [field]: value } : current);
     };
 
+    const openSupportModal = () => {
+      setSupportDraft((activeSession.supportOperators || []).map(item => ({ ...item })));
+      setSupportModalOpen(true);
+    };
+
     const toggleSupportOperator = (operator) => {
-      setActiveSession(current => {
-        if (!current) return current;
-        const selected = current.supportOperators || [];
-        const exists = selected.some(item => item.id === operator.id);
-        return {
-          ...current,
-          supportOperators: exists
-            ? selected.filter(item => item.id !== operator.id)
-            : [...selected, { ...operator, hours: '' }]
-        };
-      });
+      setSupportDraft(current => current.some(item => item.id === operator.id) ? current.filter(item => item.id !== operator.id) : [...current, { ...operator, hours: '' }]);
     };
 
     const updateSupportHours = (operatorId, hours) => {
-      setActiveSession(current => current ? {
-        ...current,
-        supportOperators: current.supportOperators.map(item => item.id === operatorId ? { ...item, hours } : item)
-      } : current);
+      setSupportDraft(current => current.map(item => item.id === operatorId ? { ...item, hours } : item));
     };
 
     const applySharedSupportHours = () => {
       if (!sharedSupportHours) return;
-      setActiveSession(current => current ? {
-        ...current,
-        supportOperators: current.supportOperators.map(item => ({ ...item, hours: sharedSupportHours }))
-      } : current);
+      setSupportDraft(current => current.map(item => ({ ...item, hours: sharedSupportHours })));
+    };
+
+    const addSupportOperator = () => {
+      const name = newSupportName.trim();
+      if (!name) return;
+      const operator = { id: `EXT-${Date.now().toString().slice(-6)}`, name };
+      setSupportOperators(current => [...current, operator]);
+      setSupportDraft(current => [...current, { ...operator, hours: '' }]);
+      setNewSupportName('');
+    };
+
+    const saveSupportOperators = () => {
+      setActiveSession(current => ({ ...current, supportOperators: supportDraft }));
+      setSupportModalOpen(false);
     };
 
     const handleCreateMaintenanceTicket = () => {
@@ -584,7 +667,7 @@ export default function OEEApplication() {
       setMaintenanceTicket({
         code: ticketCode,
         equipment: activeSession.machine,
-        cause: lossForm.cause,
+        cause: lossType === 'performance' ? 'Tramo de velocidad' : lossForm.cause,
         ...ticketForm,
         createdAt: date.toLocaleTimeString()
       });
@@ -600,7 +683,9 @@ export default function OEEApplication() {
         category: lossType,
         cause: lossForm.cause,
         duration: speedDuration,
-        qty: parseInt(lossForm.qty) || 0,
+        qty: lossType === 'quality' ? (parseInt(lossForm.reprocessQty) || 0) + (parseInt(lossForm.wasteQty) || 0) : 0,
+        reprocessQty: lossType === 'quality' ? parseInt(lossForm.reprocessQty) || 0 : 0,
+        wasteQty: lossType === 'quality' ? parseInt(lossForm.wasteQty) || 0 : 0,
         comment: lossForm.comment,
         speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.standardSpeed) : 0,
         speedEndTime: lossType === 'performance' ? lossForm.speedEndTime : null,
@@ -613,13 +698,14 @@ export default function OEEApplication() {
         ...activeSession,
         losses: [...activeSession.losses, newLoss],
         performanceEndTime: lossType === 'performance' ? lossForm.speedEndTime : activeSession.performanceEndTime,
-        // Los rechazos se registran únicamente como pérdida de calidad.
-        rejectQty: lossType === 'quality' ? activeSession.rejectQty + newLoss.qty : activeSession.rejectQty,
-        realQty: lossType === 'quality' ? activeSession.realQty + newLoss.qty : activeSession.realQty,
+         rejectQty: lossType === 'quality' ? activeSession.rejectQty + newLoss.qty : activeSession.rejectQty,
+        reprocessQty: lossType === 'quality' ? (activeSession.reprocessQty || 0) + newLoss.reprocessQty : activeSession.reprocessQty,
+        wasteQty: lossType === 'quality' ? (activeSession.wasteQty || 0) + newLoss.wasteQty : activeSession.wasteQty,
+        goodQty: lossType === 'quality' ? Math.max(0, activeSession.realQty - activeSession.rejectQty - newLoss.qty) : activeSession.goodQty,
       });
       
       setLossModalOpen(false);
-      setLossForm({ cause: '', duration: '', qty: '', speed: '', speedEndTime: '', comment: '' });
+      setLossForm({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
       setMaintenanceTicket(null);
       setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     };
@@ -633,6 +719,21 @@ export default function OEEApplication() {
       });
       setQtyModalOpen(false);
       setQtyForm({ produced: '' });
+    };
+
+    const saveOverweights = () => {
+      const validRows = overweightDraft.filter(item => Number(item.weight) > 0 && Number(item.quantity) > 0).map(item => ({ id: Date.now() + Math.random(), weight: Number(item.weight), quantity: Number(item.quantity) }));
+      if (!validRows.length) return;
+      setActiveSession(current => ({ ...current, targetWeight: Number(targetWeight) || current.targetWeight, overweights: [...(current.overweights || []), ...validRows] }));
+      setOverweightDraft([{ weight: '', quantity: '' }]);
+      setOverweightModalOpen(false);
+    };
+
+    const saveMaterialDiscard = () => {
+      if (!materialForm.material.trim() || Number(materialForm.quantity) <= 0) return;
+      setActiveSession(current => ({ ...current, materialDiscards: [...(current.materialDiscards || []), { ...materialForm, id: Date.now(), quantity: Number(materialForm.quantity) }] }));
+      setMaterialForm({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+      setMaterialModalOpen(false);
     };
 
     const handleFinish = () => {
@@ -669,18 +770,13 @@ export default function OEEApplication() {
               <p className="text-slate-400">Operador</p>
               <div className="flex items-center gap-2">
                 <p className="font-semibold">{activeSession.operator}</p>
-                <button onClick={() => setSupportModalOpen(true)} title="Registrar operarios de apoyo" className="rounded-full bg-slate-700 p-1.5 text-blue-200 hover:bg-slate-600 hover:text-white">
+                <button onClick={openSupportModal} title="Registrar operarios de apoyo" className="rounded-full bg-slate-700 p-1.5 text-blue-200 hover:bg-slate-600 hover:text-white">
                   <Users size={16} />
                 </button>
               </div>
             </div>
             <div className="text-center">
-              <p className="text-slate-400">Horario del proceso</p>
-              <div className="flex items-center gap-2 text-slate-900">
-                <input aria-label="Hora de inicio del proceso" type="time" value={activeSession.processStart} onChange={(event) => updateProcessTime('processStart', event.target.value)} className="w-24 rounded bg-white px-2 py-1 text-sm font-semibold" />
-                <span className="text-slate-400">a</span>
-                <input aria-label="Hora de finalización del proceso" type="time" value={activeSession.processEnd} onChange={(event) => updateProcessTime('processEnd', event.target.value)} className="w-24 rounded bg-white px-2 py-1 text-sm font-semibold" />
-              </div>
+              <div className="flex items-end gap-2"><TimeField label="Inicio del proceso" value={activeSession.processStart} onChange={(value) => updateProcessTime('processStart', value)}/><span className="pb-3 text-slate-400">a</span><TimeField label="Fin del proceso" value={activeSession.processEnd} onChange={(value) => updateProcessTime('processEnd', value)}/></div>
             </div>
             <div className="text-center hidden md:block">
               <p className="text-slate-400">Planificado</p>
@@ -724,7 +820,7 @@ export default function OEEApplication() {
 
         {/* Control Panel Buttons */}
         <h3 className="text-lg font-bold text-slate-800 mt-8 mb-4">Panel de Registro</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           <button 
             onClick={() => setQtyModalOpen(true)}
             className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:shadow-md transition-all group"
@@ -735,6 +831,8 @@ export default function OEEApplication() {
             <span className="font-bold text-slate-800 text-lg">Registrar Producción</span>
             <span className="text-sm text-slate-500">Actualizar contador</span>
           </button>
+          <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-3 rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><span className="text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Peso y cantidad de productos</span></button>
+          <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></button>
 
           <button 
             onClick={() => { setLossType('availability'); setLossModalOpen(true); }}
@@ -826,12 +924,12 @@ export default function OEEApplication() {
               <label className="block text-sm font-semibold text-blue-900">Asignar las mismas horas a todos</label>
               <div className="mt-2 flex gap-2">
                 <input type="number" min="0" step="0.25" placeholder="Horas" value={sharedSupportHours} onChange={(event) => setSharedSupportHours(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" />
-                <Button variant="secondary" className="!px-3 !py-2" disabled={!sharedSupportHours || activeSession.supportOperators.length === 0} onClick={applySharedSupportHours}>Aplicar</Button>
+                <Button variant="secondary" className="!px-3 !py-2" disabled={!sharedSupportHours || supportDraft.length === 0} onClick={applySharedSupportHours}>Aplicar</Button>
               </div>
             </div>
             <div className="space-y-2">
-              {SUPPORT_OPERATORS.map(operator => {
-                const selected = activeSession.supportOperators.find(item => item.id === operator.id);
+              {supportOperators.map(operator => {
+                const selected = supportDraft.find(item => item.id === operator.id);
                 return (
                   <div key={operator.id} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
                     <input aria-label={`Seleccionar ${operator.name}`} type="checkbox" checked={Boolean(selected)} onChange={() => toggleSupportOperator(operator)} className="h-4 w-4" />
@@ -841,13 +939,14 @@ export default function OEEApplication() {
                 );
               })}
             </div>
-            <Button className="w-full" onClick={() => setSupportModalOpen(false)}>Guardar operarios de apoyo</Button>
+            <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-3"><label className="mb-2 block text-sm font-semibold text-blue-900">Añadir operario no registrado</label><div className="flex gap-2"><input className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" placeholder="Nombre completo" value={newSupportName} onChange={(event) => setNewSupportName(event.target.value)}/><Button variant="secondary" className="!px-3 !py-2" disabled={!newSupportName.trim()} onClick={addSupportOperator}><Plus size={16}/> Añadir</Button></div></div>
+            <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={() => setSupportModalOpen(false)}>Cancelar</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Guardar todos ({supportDraft.length})</Button></div>
           </div>
         </Modal>
 
         <Modal isOpen={lossModalOpen} onClose={() => setLossModalOpen(false)} title={`Registrar Pérdida de ${lossType === 'availability' ? 'Disponibilidad' : lossType === 'performance' ? 'Rendimiento' : 'Calidad'}`}>
           <div className="space-y-4">
-            <div>
+            {lossType !== 'performance' && <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Causa de la Pérdida</label>
               <select 
                 className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500"
@@ -859,7 +958,7 @@ export default function OEEApplication() {
                 <option value="">Seleccione una causa...</option>
                 {LOSS_CAUSES[lossType].map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-            </div>
+            </div>}
             
             {lossType === 'performance' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
@@ -882,7 +981,7 @@ export default function OEEApplication() {
             {lossType === 'performance' && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Hora de finalización de velocidad</label>
-                <input type="time" className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-purple-500 focus:ring-purple-500 text-lg" value={lossForm.speedEndTime} onChange={(e) => setLossForm({...lossForm, speedEndTime: e.target.value})} />
+                <TimeField label="Hora y minuto final del tramo" value={lossForm.speedEndTime} onChange={(value) => setLossForm({...lossForm, speedEndTime: value})} />
                 {lossForm.speedEndTime && <p className="mt-1 text-sm text-purple-700">Horas de velocidad: {(elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) / 60).toFixed(2)} h</p>}
               </div>
             )}
@@ -900,12 +999,7 @@ export default function OEEApplication() {
 
             {lossType === 'quality' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Cantidad Rechazada (und)</label>
-                <input 
-                  type="number" min="1"
-                  className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500 text-lg"
-                  value={lossForm.qty} onChange={(e) => setLossForm({...lossForm, qty: e.target.value})}
-                />
+                <div className="grid grid-cols-2 gap-3"><div><label className="block text-sm font-medium text-amber-800 mb-1">Reproceso (und)</label><input type="number" min="0" className="w-full rounded-lg border border-amber-300 p-3 text-lg" value={lossForm.reprocessQty} onChange={(e) => setLossForm({...lossForm, reprocessQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Puede volver a fabricarse.</p></div><div><label className="block text-sm font-medium text-rose-800 mb-1">Desperdicio (und)</label><input type="number" min="0" className="w-full rounded-lg border border-rose-300 p-3 text-lg" value={lossForm.wasteQty} onChange={(e) => setLossForm({...lossForm, wasteQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Descarte definitivo.</p></div></div>
               </div>
             )}
 
@@ -940,7 +1034,7 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && !lossForm.qty) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={(lossType !== 'performance' && !lossForm.cause) || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               Registrar Pérdida
@@ -1002,6 +1096,12 @@ export default function OEEApplication() {
             </Button>
           </div>
         </Modal>
+        <Modal isOpen={overweightModalOpen} onClose={() => setOverweightModalOpen(false)} title="Registrar sobrepeso">
+          <div className="space-y-4"><p className="text-sm text-slate-600">Registra uno o varios pesos y la cantidad de productos correspondiente a cada medición.</p><div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={targetWeight} onChange={(event) => setTargetWeight(event.target.value)} placeholder="Ej. 250"/></div>{overweightDraft.map((item, index) => <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 rounded-lg border border-slate-200 p-3"><div><label className="text-xs font-semibold text-slate-600">Peso (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={item.weight} onChange={(event) => setOverweightDraft(current => current.map((row, rowIndex) => rowIndex === index ? {...row, weight:event.target.value} : row))}/></div><div><label className="text-xs font-semibold text-slate-600">Cantidad</label><input type="number" min="1" className="mt-1 w-full rounded border border-slate-300 p-2" value={item.quantity} onChange={(event) => setOverweightDraft(current => current.map((row, rowIndex) => rowIndex === index ? {...row, quantity:event.target.value} : row))}/></div><button disabled={overweightDraft.length === 1} onClick={() => setOverweightDraft(current => current.filter((_, rowIndex) => rowIndex !== index))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>)}<Button variant="secondary" className="w-full" onClick={() => setOverweightDraft(current => [...current, {weight:'',quantity:''}])}><Plus size={18}/> Agregar otro peso</Button><Button className="w-full" disabled={!overweightDraft.some(item => Number(item.weight)>0 && Number(item.quantity)>0)} onClick={saveOverweights}>Guardar sobrepesos</Button></div>
+        </Modal>
+        <Modal isOpen={materialModalOpen} onClose={() => setMaterialModalOpen(false)} title="Registrar descarte de material">
+          <div className="space-y-4"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Tipo de material</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.type} onChange={(event) => setMaterialForm({...materialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option></select></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Material descartado</label><input className="w-full rounded-lg border border-slate-300 p-3" placeholder="Ej. blíster, frasco, caja..." value={materialForm.material} onChange={(event) => setMaterialForm({...materialForm,material:event.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Cantidad</label><input type="number" min="0" className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.quantity} onChange={(event) => setMaterialForm({...materialForm,quantity:event.target.value})}/></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Unidad</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.unit} onChange={(event) => setMaterialForm({...materialForm,unit:event.target.value})}><option>unidades</option><option>kg</option><option>metros</option></select></div></div><textarea className="w-full rounded-lg border border-slate-300 p-3" placeholder="Comentario opcional" value={materialForm.comment} onChange={(event) => setMaterialForm({...materialForm,comment:event.target.value})}/><Button className="w-full" disabled={!materialForm.material.trim() || Number(materialForm.quantity)<=0} onClick={saveMaterialDiscard}>Guardar descarte</Button></div>
+        </Modal>
       </div>
     );
   };
@@ -1034,7 +1134,7 @@ export default function OEEApplication() {
     const StatusList = ({ title, records: statusRecords, variant, emptyMessage, selectable = false }: { title: string; records: any[]; variant: BadgeVariant; emptyMessage: string; selectable?: boolean }) => (
       <Card>
         <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between"><h3 className="font-bold text-slate-800">{title}</h3><Badge variant={variant}>{statusRecords.length}</Badge></div>
-        {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.workOrderId || record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}>Revisar</Button>}</li>)}</ul>}
+        {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.workOrderId || record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}><Eye size={16}/> {record.status === 'review' ? 'Revisar' : 'Ver'}</Button>}</li>)}</ul>}
       </Card>
     );
 
@@ -1043,13 +1143,13 @@ export default function OEEApplication() {
         <h2 className="text-2xl font-bold text-slate-800">Bandeja de Validaciones</h2>
         {selectedRecord ? (
           <Card>
-            <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Revisión de OT: {selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant="warning">En revisión</Badge></div>
+            <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Detalle de OT: {selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant={selectedRecord.status === 'validated' ? 'success' : 'warning'}>{WORK_ORDER_STATUS[selectedRecord.status]?.label || selectedRecord.status}</Badge></div>
             <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div><p className="text-sm text-slate-500">Operario responsable</p><p className="font-semibold">{selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>{selectedRecord.metrics.oee.toFixed(1)}%</p></div></div>
             <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex justify-between"><span>{loss.cause}</span><span className="font-semibold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>)}</div>}</div>
-            <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div></div>
+            {selectedRecord.status === 'review' && <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div>}</div>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><StatusList title="OT en revisión" records={reviewRecords} variant="warning" emptyMessage="No hay OT en revisión." selectable /><StatusList title="OT observadas" records={observedRecords} variant="critical" emptyMessage="No hay OT observadas." /><StatusList title="OT aprobadas" records={validatedRecords} variant="success" emptyMessage="No hay OT aprobadas." /></div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><StatusList title="OT en revisión" records={reviewRecords} variant="warning" emptyMessage="No hay OT en revisión." selectable /><StatusList title="OT observadas" records={observedRecords} variant="critical" emptyMessage="No hay OT observadas." /><StatusList title="OT aprobadas" records={validatedRecords} variant="success" emptyMessage="No hay OT aprobadas." selectable /></div>
         )}
         <Modal isOpen={observationModalOpen} onClose={() => setObservationModalOpen(false)} title="Observar OT">
           <div className="space-y-4"><p className="text-sm text-slate-600">Indica el comentario que el operario responsable deberá revisar.</p><textarea className="w-full rounded-lg border border-slate-300 p-3" rows={4} placeholder="Describe la observación..." value={observationComment} onChange={(event) => setObservationComment(event.target.value)} /><Button variant="danger" className="w-full" disabled={!observationComment.trim()} onClick={observeRecord}><Edit size={18}/> Enviar observación</Button></div>
@@ -1208,3 +1308,4 @@ export default function OEEApplication() {
     </div>
   );
 }
+
