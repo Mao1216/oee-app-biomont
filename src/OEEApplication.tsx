@@ -645,6 +645,7 @@ export default function OEEApplication() {
       // Simulate sending to review
       const recordToSave = {
         ...activeSession,
+        workOrderId: activeSession.id,
         id: `REC-${Date.now().toString().slice(-6)}`,
         status: 'review',
         metrics: metrics,
@@ -970,7 +971,7 @@ export default function OEEApplication() {
       if (!observationComment.trim()) return;
       const meeting = { code: `REU-${Date.now().toString().slice(-6)}`, attendee: 'Juanito', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString() };
       setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'observed', observationComment, correctionMeeting: meeting } : record));
-      setWorkOrders(current => current.map(order => order.id === selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'observed' } : order));
+      setWorkOrders(current => current.map(order => order.id === selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'observed' } : order));
       setObservationComment('');
       setObservationModalOpen(false);
       setSelectedRecord(null);
@@ -979,7 +980,7 @@ export default function OEEApplication() {
 
     const approveRecord = () => {
       setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'validated' } : record));
-      setWorkOrders(current => current.map(order => order.id === selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'validated' } : order));
+      setWorkOrders(current => current.map(order => order.id === selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'validated' } : order));
       setSelectedRecord(null);
     };
 
@@ -995,7 +996,7 @@ export default function OEEApplication() {
         <h2 className="text-2xl font-bold text-slate-800">Bandeja de Validaciones</h2>
         {selectedRecord ? (
           <Card>
-            <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Revisión de OT: {selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant="warning">En revisión</Badge></div>
+            <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Revisión de OT: {selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant="warning">En revisión</Badge></div>
             <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div><p className="text-sm text-slate-500">Operario responsable</p><p className="font-semibold">{selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>{selectedRecord.metrics.oee.toFixed(1)}%</p></div></div>
             <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex justify-between"><span>{loss.cause}</span><span className="font-semibold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>)}</div>}</div>
             <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div></div>
