@@ -47,10 +47,19 @@ const DEMO_CREDENTIALS = {
 };
 
 const WORK_ORDERS = [
-  { id: "OT-2026-0801", product: "Paracetamol 500mg Blister", line: "Línea Empaque 1", machine: "Blistera B-01", plannedQty: 50000, status: "pending", date: "2026-08-18" },
-  { id: "OT-2026-0802", product: "Ibuprofeno 400mg Frasco", line: "Línea Líquidos 2", machine: "Llenadora L-02", plannedQty: 15000, status: "in_progress", date: "2026-08-18" },
-  { id: "OT-2026-0803", product: "Amoxicilina 250mg Susp", line: "Línea Polvos 1", machine: "Dosificadora P-01", plannedQty: 8000, status: "pending", date: "2026-08-19" },
+  { id: "OT-2026-0801", product: "Paracetamol 500mg Blister", line: "Línea Empaque 1", machine: "Blistera B-01", plannedQty: 50000, status: "pending_assignment", date: "2026-08-18" },
+  { id: "OT-2026-0802", product: "Ibuprofeno 400mg Frasco", line: "Línea Líquidos 2", machine: "Llenadora L-02", plannedQty: 15000, status: "pending_assignment", date: "2026-08-18" },
+  { id: "OT-2026-0803", product: "Amoxicilina 250mg Susp", line: "Línea Polvos 1", machine: "Dosificadora P-01", plannedQty: 8000, status: "pending_assignment", date: "2026-08-19" },
 ];
+
+const WORK_ORDER_STATUS = {
+  pending_assignment: { label: 'Pendiente de asignar', variant: 'warning' },
+  assigned: { label: 'Asignado', variant: 'primary' },
+  in_progress: { label: 'En proceso', variant: 'success' },
+  review: { label: 'En revisión', variant: 'warning' },
+  observed: { label: 'Observado', variant: 'critical' },
+  validated: { label: 'Validado', variant: 'success' }
+};
 
 const MACHINES = [
   { id: "B-01", name: "Blistera B-01", line: "Línea Empaque 1", status: "available", standardSpeed: 100 },
@@ -143,9 +152,7 @@ export default function OEEApplication() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null); // 'supervisor', 'responsible_operator'
   const [currentView, setCurrentView] = useState('dashboard');
-  const [loginRole, setLoginRole] = useState('supervisor');
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-  const [loginError, setLoginError] = useState('');
+  const [loginRole, setLoginRole] = useState('');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   
   // App Data State
@@ -154,6 +161,7 @@ export default function OEEApplication() {
   const [importMessage, setImportMessage] = useState('');
   const [operatorAssignments, setOperatorAssignments] = useState({});
   const [responsibleAssignments, setResponsibleAssignments] = useState({});
+  const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', product: '', line: '', quantity: '', status: '', responsible: '' });
   const workOrdersFileInputRef = useRef(null);
   
   // Active Operator Session State
@@ -163,15 +171,10 @@ export default function OEEApplication() {
 
   const handleLogin = (event) => {
     event.preventDefault();
-    const credentials = DEMO_CREDENTIALS[loginRole];
-    if (loginForm.username !== credentials.username || loginForm.password !== credentials.password) {
-      setLoginError('Usuario o contraseña incorrectos.');
-      return;
-    }
+    if (!loginRole) return;
     setRole(loginRole);
     setIsLoggedIn(true);
     setCurrentView(loginRole === 'responsible_operator' ? 'work_orders' : 'dashboard');
-    setLoginError('');
   };
 
   const logout = () => {
@@ -216,7 +219,7 @@ export default function OEEApplication() {
           line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
           machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
           plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
-          status: statusText.includes('proceso') || statusText.includes('progress') ? 'in_progress' : 'pending',
+          status: 'pending_assignment',
           date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
         };
       }).filter(order => order.id);
@@ -237,10 +240,14 @@ export default function OEEApplication() {
   const assignOperator = (order, operatorId) => {
     const assignmentKey = `${order.id}-${order.line}`;
     setOperatorAssignments(current => ({ ...current, [assignmentKey]: operatorId }));
+    if (operatorId) {
+      setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: 'in_progress' } : workOrder));
+    }
   };
 
   const assignResponsibleOperator = (order, operatorId) => {
     setResponsibleAssignments(current => ({ ...current, [order.id]: operatorId }));
+    setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: operatorId ? 'assigned' : 'pending_assignment' } : workOrder));
   };
 
   // Helper to calculate active session OEE
@@ -300,26 +307,13 @@ export default function OEEApplication() {
           <form className="p-8 space-y-5" onSubmit={handleLogin}>
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Perfil de acceso</label>
-              <select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => {
-                setLoginRole(event.target.value);
-                setLoginForm({ username: '', password: '' });
-                setLoginError('');
-              }}>
+              <select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => setLoginRole(event.target.value)}>
+                <option value="">Selecciona un perfil</option>
                 <option value="supervisor">Supervisor</option>
                 <option value="responsible_operator">Operario responsable</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Usuario</label>
-              <input className="w-full rounded-lg border border-slate-300 p-3" value={loginForm.username} onChange={(event) => setLoginForm({...loginForm, username: event.target.value})} autoComplete="username" />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Contraseña</label>
-              <input type="password" className="w-full rounded-lg border border-slate-300 p-3" value={loginForm.password} onChange={(event) => setLoginForm({...loginForm, password: event.target.value})} autoComplete="current-password" />
-            </div>
-            {loginError && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{loginError}</p>}
-            <Button className="w-full !py-3" type="submit"><User size={18} /> Ingresar</Button>
-            <p className="text-center text-xs text-slate-500">Demo: supervisor <strong>molin</strong> / password · operario responsable <strong>Juanito</strong> / password</p>
+            <Button className="w-full !py-3" type="submit" disabled={!loginRole}><User size={18} /> Ingresar</Button>
           </form>
         </div>
       </div>
@@ -440,130 +434,90 @@ export default function OEEApplication() {
     </div>
   );
 
-  const WorkOrdersView = () => (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
-          <p className="text-slate-500">{role === 'supervisor' ? 'Carga y consulta las órdenes de trabajo.' : 'Seleccione una OT para iniciar el registro de producción.'}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {role === 'supervisor' && (
-            <>
-              <input
-                ref={workOrdersFileInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={handleWorkOrdersImport}
-              />
-              <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}>
-                <Upload size={18} /> Cargar Excel
-              </Button>
-            </>
-          )}
-          <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
-        </div>
-      </div>
+  const WorkOrdersView = () => {
+    const activeStatuses = ['pending_assignment', 'assigned', 'in_progress'];
+    const normalized = (value) => String(value || '').toLowerCase();
+    const visibleWorkOrders = workOrders.filter((order) => {
+      if (!activeStatuses.includes(order.status)) return false;
+      const responsible = RESPONSIBLE_OPERATORS.find(operator => operator.id === responsibleAssignments[order.id])?.name || '';
+      return normalized(order.id).includes(normalized(workOrderFilters.code))
+        && normalized(order.product).includes(normalized(workOrderFilters.product))
+        && normalized(`${order.line} ${order.machine}`).includes(normalized(workOrderFilters.line))
+        && String(order.plannedQty).includes(workOrderFilters.quantity.replace(/[^0-9]/g, ''))
+        && (!workOrderFilters.status || order.status === workOrderFilters.status)
+        && normalized(responsible).includes(normalized(workOrderFilters.responsible));
+    });
+    const updateFilter = (field, value) => setWorkOrderFilters(current => ({ ...current, [field]: value }));
 
-      {importMessage && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          {importMessage}
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
+            <p className="text-slate-500">{role === 'supervisor' ? 'Carga, consulta y asigna el operario responsable de las OT.' : 'Seleccione una OT para iniciar el registro de producción.'}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {role === 'supervisor' && (
+              <>
+                <input ref={workOrdersFileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleWorkOrdersImport} />
+                <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}><Upload size={18} /> Cargar Excel</Button>
+              </>
+            )}
+            <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
+          </div>
         </div>
-      )}
 
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
-                <th className="p-4 font-semibold">Código OT</th>
-                <th className="p-4 font-semibold">Producto</th>
-                <th className="p-4 font-semibold">Línea/Máquina</th>
-                <th className="p-4 font-semibold">Planificado</th>
-                <th className="p-4 font-semibold">Estado</th>
-                <th className="p-4 font-semibold text-right">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {workOrders.map((ot) => (
-                <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
-                  <td className="p-4 font-medium text-slate-800">{ot.id}</td>
-                  <td className="p-4 text-slate-600">{ot.product}</td>
-                  <td className="p-4">
-                    <div className="text-sm text-slate-800">{ot.line}</div>
-                    <div className="text-xs text-slate-500">{ot.machine}</div>
-                  </td>
-                  <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
-                  <td className="p-4">
-                    <Badge variant={ot.status === 'pending' ? 'default' : 'primary'}>
-                      {ot.status === 'pending' ? 'Pendiente' : 'En Proceso'}
-                    </Badge>
-                  </td>
-                  <td className="p-4 text-right">
-                    {role === 'supervisor' ? (
-                      <span className="text-sm text-slate-500">Asignación gestionada por el operario responsable</span>
-                    ) : (
-                      <Button 
-                        variant="primary" 
-                        className="!px-4 !py-2 text-sm"
-                        onClick={() => {
-                          setActiveSession({
-                            ...ot,
-                            operator: currentUser.name,
-                            shift: SHIFTS[0],
-                            realQty: 0, goodQty: 0, rejectQty: 0,
-                            losses: [],
-                            standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100,
-                            actualSpeed: 0,
-                            startTime: new Date().toLocaleTimeString(),
-                            plannedTime: 480
-                          });
+        {importMessage && <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{importMessage}</div>}
+
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
+                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">{role === 'supervisor' ? 'Operario responsable' : 'Acción'}</th>
+                </tr>
+                {role === 'supervisor' && (
+                  <tr className="border-b border-slate-200 bg-white">
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.responsible} onChange={(e) => updateFilter('responsible', e.target.value)}><option value="">Todos</option><option value="Juanito">Juanito</option></select></th>
+                  </tr>
+                )}
+              </thead>
+              <tbody>
+                {visibleWorkOrders.map((ot) => (
+                  <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                    <td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 text-slate-600">{ot.product}</td>
+                    <td className="p-4"><div className="text-sm text-slate-800">{ot.line}</div><div className="text-xs text-slate-500">{ot.machine}</div></td>
+                    <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
+                    <td className="p-4"><Badge variant={WORK_ORDER_STATUS[ot.status].variant}>{WORK_ORDER_STATUS[ot.status].label}</Badge></td>
+                    <td className="p-4">
+                      {role === 'supervisor' ? (
+                        <select className="w-full min-w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[ot.id] || ''} onChange={(event) => assignResponsibleOperator(ot, event.target.value)}>
+                          <option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
+                        </select>
+                      ) : (
+                        <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status !== 'in_progress'} onClick={() => {
+                          setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, losses: [], standardSpeed: MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 100, actualSpeed: 0, startTime: new Date().toLocaleTimeString(), plannedTime: 480});
                           setCurrentView('active_production');
-                        }}
-                      >
-                        {ot.status === 'pending' ? 'Iniciar OT' : 'Continuar'} <ArrowRight size={16} />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
-
-  const ResponsibleOperatorView = () => (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800">Operario responsable</h2>
-        <p className="text-slate-500">Asigna el responsable que administrará los operarios de cada OT.</p>
+                        }}>{ot.status === 'in_progress' ? 'Iniciar OT' : 'Asignar operarios primero'} <ArrowRight size={16} /></Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {visibleWorkOrders.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-500">No hay OT que coincidan con los filtros.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
-      <Card>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead><tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600"><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Línea</th><th className="p-4 font-semibold">Operario responsable</th></tr></thead>
-            <tbody>
-              {workOrders.map((order) => (
-                <tr key={order.id} className="border-b border-slate-100 last:border-0">
-                  <td className="p-4 font-medium text-slate-800">{order.id}</td>
-                  <td className="p-4 text-slate-700">{order.line}</td>
-                  <td className="p-4">
-                    <select className="w-full min-w-56 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[order.id] || ''} onChange={(event) => assignResponsibleOperator(order, event.target.value)}>
-                      <option value="">Selecciona un responsable</option>
-                      {RESPONSIBLE_OPERATORS.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
-  );
+    );
+  };
+
+
 
   const OperatorsView = () => (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -697,6 +651,7 @@ export default function OEEApplication() {
         date: new Date().toISOString().split('T')[0]
       };
       setRecords([...records, recordToSave]);
+      setWorkOrders(current => current.map(order => order.id === activeSession.id ? { ...order, status: 'review' } : order));
       setActiveSession(null);
       setCurrentView('work_orders');
       // In a real app, show a toast notification here
@@ -1005,144 +960,52 @@ export default function OEEApplication() {
 
   const ValidationsView = () => {
     const [selectedRecord, setSelectedRecord] = useState(null);
+    const [observationModalOpen, setObservationModalOpen] = useState(false);
+    const [observationComment, setObservationComment] = useState('');
+    const reviewRecords = records.filter(record => record.status === 'review');
+    const observedRecords = records.filter(record => record.status === 'observed');
+    const validatedRecords = records.filter(record => record.status === 'validated');
 
-    // Filter records for the demo
-    const pendingRecords = records.filter(r => r.status === 'review');
-    const validatedRecords = records.filter(r => r.status === 'validated');
+    const observeRecord = () => {
+      if (!observationComment.trim()) return;
+      const meeting = { code: `REU-${Date.now().toString().slice(-6)}`, attendee: 'Juanito', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString() };
+      setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'observed', observationComment, correctionMeeting: meeting } : record));
+      setWorkOrders(current => current.map(order => order.id === selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'observed' } : order));
+      setObservationComment('');
+      setObservationModalOpen(false);
+      setSelectedRecord(null);
+      alert(`OT observada. Se asignó la reunión ${meeting.code} con Juanito para el ${meeting.date}.`);
+    };
+
+    const approveRecord = () => {
+      setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'validated' } : record));
+      setWorkOrders(current => current.map(order => order.id === selectedRecord.id.replace(/^REC-/, '') ? { ...order, status: 'validated' } : order));
+      setSelectedRecord(null);
+    };
+
+    const StatusList = ({ title, records: statusRecords, variant, emptyMessage, selectable = false }) => (
+      <Card>
+        <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between"><h3 className="font-bold text-slate-800">{title}</h3><Badge variant={variant}>{statusRecords.length}</Badge></div>
+        {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}>Revisar</Button>}</li>)}</ul>}
+      </Card>
+    );
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
         <h2 className="text-2xl font-bold text-slate-800">Bandeja de Validaciones</h2>
-        
         {selectedRecord ? (
-          <Card className="animate-in slide-in-from-right-4">
-             <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg transition-colors">
-                    <ArrowRight className="rotate-180" size={20} />
-                  </button>
-                  <h3 className="text-lg font-bold text-slate-800">Revisión de Registro: {selectedRecord.id}</h3>
-                </div>
-                <Badge variant="warning">Pendiente Revisión</Badge>
-              </div>
-              <div className="p-6">
-                {/* Summary Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-                  <div>
-                    <p className="text-sm text-slate-500">Operador</p>
-                    <p className="font-semibold text-slate-800">{selectedRecord.operator}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">Máquina</p>
-                    <p className="font-semibold text-slate-800">{selectedRecord.machine}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">Producción Real</p>
-                    <p className="font-semibold text-slate-800">{selectedRecord.realQty.toLocaleString()} und</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500">OEE Final</p>
-                    <p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>
-                      {selectedRecord.metrics.oee.toFixed(1)}%
-                    </p>
-                  </div>
-                </div>
-
-                <h4 className="font-bold text-slate-800 mb-4 border-b pb-2">Detalle de Pérdidas Declaradas</h4>
-                <div className="space-y-2 mb-8">
-                  {selectedRecord.losses.map(loss => (
-                    <div key={loss.id} className="p-3 bg-slate-50 rounded-lg flex justify-between items-center border border-slate-200">
-                       <div className="flex gap-4 items-center">
-                         <Badge variant={loss.category === 'availability' ? 'warning' : 'default'}>{loss.category}</Badge>
-                         <span className="font-medium">{loss.cause}</span>
-                         {loss.comment && <span className="text-sm text-slate-500 italic">"{loss.comment}"</span>}
-                       </div>
-                       <span className="font-bold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span>
-                    </div>
-                  ))}
-                  {selectedRecord.losses.length === 0 && <p className="text-slate-500 text-sm">No se registraron pérdidas.</p>}
-                </div>
-
-                <div className="flex gap-4 pt-4 border-t border-slate-200">
-                  <Button variant="danger" className="flex-1" onClick={() => {
-                    const meeting = {
-                       code: `REU-${Date.now().toString().slice(-6)}`,
-                       attendee: 'Juanito',
-                       date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString(),
-                       topic: `Revisión de indicadores de ${selectedRecord.id}`
-                     };
-                     setRecords(records.map(record => record.id === selectedRecord.id ? {...record, status: 'correction_requested', correctionMeeting: meeting} : record));
-                     alert(`Solicitud enviada. Se asignó la reunión ${meeting.code} con Juanito para el ${meeting.date}.`);
-                     setSelectedRecord(null);
-                  }}><Edit size={18}/> Solicitar Corrección</Button>
-                  <Button variant="success" className="flex-1" onClick={() => {
-                    // Update state to validated
-                    const updated = records.map(r => r.id === selectedRecord.id ? {...r, status: 'validated'} : r);
-                    setRecords(updated);
-                    setSelectedRecord(null);
-                  }}><CheckCircle size={18}/> Aprobar y Validar</Button>
-                </div>
-              </div>
+          <Card>
+            <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Revisión de OT: {selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant="warning">En revisión</Badge></div>
+            <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div><p className="text-sm text-slate-500">Operario responsable</p><p className="font-semibold">{selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>{selectedRecord.metrics.oee.toFixed(1)}%</p></div></div>
+            <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex justify-between"><span>{loss.cause}</span><span className="font-semibold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>)}</div>}</div>
+            <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div></div>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 gap-6">
-            <Card>
-              <div className="p-4 border-b border-slate-200 bg-amber-50">
-                <h3 className="font-bold text-amber-800 flex items-center gap-2">
-                  <AlertCircleIcon /> Pendientes de Revisión ({pendingRecords.length})
-                </h3>
-              </div>
-              <div className="p-0">
-                {pendingRecords.length === 0 ? (
-                  <p className="p-6 text-center text-slate-500">No hay registros pendientes.</p>
-                ) : (
-                   <ul className="divide-y divide-slate-100">
-                    {pendingRecords.map(r => (
-                      <li key={r.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                        <div>
-                          <p className="font-bold text-slate-800">{r.id} <span className="text-sm font-normal text-slate-500 ml-2">{r.date}</span></p>
-                          <p className="text-sm text-slate-600">{r.machine} - {r.operator}</p>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          <div className="text-right">
-                            <p className="text-xs text-slate-500">OEE Calculado</p>
-                            <p className="font-bold text-lg" style={{color: getOEEColor(r.metrics.oee)}}>{r.metrics.oee.toFixed(1)}%</p>
-                          </div>
-                          <Button variant="secondary" className="!px-3 !py-1.5" onClick={() => setSelectedRecord(r)}>
-                            Revisar
-                          </Button>
-                        </div>
-                      </li>
-                    ))}
-                   </ul>
-                )}
-              </div>
-            </Card>
-
-            <Card>
-              <div className="p-4 border-b border-slate-200 bg-slate-50">
-                <h3 className="font-bold text-slate-800">Últimos Validados</h3>
-              </div>
-              <div className="p-0">
-                 {validatedRecords.length === 0 ? (
-                  <p className="p-6 text-center text-slate-500">No hay registros validados recientes.</p>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {validatedRecords.map(r => (
-                      <li key={r.id} className="p-4 flex items-center justify-between opacity-70">
-                         <div>
-                          <p className="font-medium text-slate-800">{r.id}</p>
-                          <p className="text-xs text-slate-500">Validado por ti hoy</p>
-                        </div>
-                        <Badge variant="success">Validado</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </Card>
-          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><StatusList title="OT en revisión" records={reviewRecords} variant="warning" emptyMessage="No hay OT en revisión." selectable /><StatusList title="OT observadas" records={observedRecords} variant="critical" emptyMessage="No hay OT observadas." /><StatusList title="OT aprobadas" records={validatedRecords} variant="success" emptyMessage="No hay OT aprobadas." /></div>
         )}
+        <Modal isOpen={observationModalOpen} onClose={() => setObservationModalOpen(false)} title="Observar OT">
+          <div className="space-y-4"><p className="text-sm text-slate-600">Indica el comentario que el operario responsable deberá revisar.</p><textarea className="w-full rounded-lg border border-slate-300 p-3" rows="4" placeholder="Describe la observación..." value={observationComment} onChange={(event) => setObservationComment(event.target.value)} /><Button variant="danger" className="w-full" disabled={!observationComment.trim()} onClick={observeRecord}><Edit size={18}/> Enviar observación</Button></div>
+        </Modal>
       </div>
     );
   };
@@ -1240,10 +1103,8 @@ export default function OEEApplication() {
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
-          {role === 'supervisor' && <SidebarItem icon={Users} label="Operario responsable" viewId="responsible_operator" />}
           {role === 'responsible_operator' && <SidebarItem icon={Users} label="Operarios" viewId="operators" />}
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
-          {role === 'supervisor' && <SidebarItem icon={History} label="Historial" viewId="history" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
         </div>
 
@@ -1291,18 +1152,10 @@ export default function OEEApplication() {
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
             {currentView === 'work_orders' && <WorkOrdersView />}
-            {currentView === 'responsible_operator' && <ResponsibleOperatorView />}
             {currentView === 'operators' && <OperatorsView />}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
             {currentView === 'ai' && <AIAssistantView />}
-            {currentView === 'history' && (
-              <div className="text-center p-12">
-                <History className="mx-auto text-slate-300 w-16 h-16 mb-4" />
-                <h2 className="text-xl font-bold text-slate-800">Módulo Histórico</h2>
-                <p className="text-slate-500">Vista de tabla completa disponible en versión de producción.</p>
-              </div>
-            )}
           </div>
         </div>
       </main>
