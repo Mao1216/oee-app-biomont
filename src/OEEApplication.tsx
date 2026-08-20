@@ -52,7 +52,7 @@ const WORK_ORDERS = [
   { id: "OT-2026-0803", product: "Amoxicilina 250mg Susp", line: "Línea Polvos 1", machine: "Dosificadora P-01", plannedQty: 8000, status: "pending_assignment", date: "2026-08-19" },
 ];
 
-const WORK_ORDER_STATUS = {
+const WORK_ORDER_STATUS: Record<string, { label: string; variant: BadgeVariant }> = {
   pending_assignment: { label: 'Pendiente de asignar', variant: 'warning' },
   assigned: { label: 'Asignado', variant: 'primary' },
   in_progress: { label: 'En proceso', variant: 'success' },
@@ -987,7 +987,7 @@ export default function OEEApplication() {
       setSelectedRecord(null);
     };
 
-    const StatusList = ({ title, records: statusRecords, variant, emptyMessage, selectable = false }) => (
+    const StatusList = ({ title, records: statusRecords, variant, emptyMessage, selectable = false }: { title: string; records: any[]; variant: BadgeVariant; emptyMessage: string; selectable?: boolean }) => (
       <Card>
         <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between"><h3 className="font-bold text-slate-800">{title}</h3><Badge variant={variant}>{statusRecords.length}</Badge></div>
         {statusRecords.length === 0 ? <p className="p-6 text-center text-slate-500">{emptyMessage}</p> : <ul className="divide-y divide-slate-100">{statusRecords.map(record => <li key={record.id} className="p-4 flex items-center justify-between"><div><p className="font-semibold text-slate-800">{record.workOrderId || record.id.replace(/^REC-/, '')}</p><p className="text-sm text-slate-500">{record.machine} · {record.operator}</p>{record.observationComment && <p className="mt-1 text-sm text-rose-700">Observación: {record.observationComment}</p>}</div>{selectable && <Button variant="secondary" className="!px-3 !py-2" onClick={() => setSelectedRecord(record)}>Revisar</Button>}</li>)}</ul>}
