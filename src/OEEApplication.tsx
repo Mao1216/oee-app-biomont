@@ -92,14 +92,17 @@ const CHART_DATA_PARETO = [
   { cause: 'Otros', minutes: 25, cumulative: 100 },
 ];
 
-const Card = ({ children, className = "" }) => (
-  <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden ${className}`}>
+type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
+type BadgeVariant = 'default' | 'success' | 'warning' | 'critical' | 'primary';
+
+const Card = ({ children, className = '', ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+  <div {...props} className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden ${className}`}>
     {children}
   </div>
 );
 
-const Badge = ({ children, variant = "default" }) => {
-  const variants = {
+const Badge = ({ children, variant = 'default', className = '', ...props }: React.HTMLAttributes<HTMLSpanElement> & { variant?: BadgeVariant }) => {
+  const variants: Record<BadgeVariant, string> = {
     default: "bg-slate-100 text-slate-700",
     success: "bg-emerald-100 text-emerald-700",
     warning: "bg-amber-100 text-amber-700",
@@ -107,15 +110,15 @@ const Badge = ({ children, variant = "default" }) => {
     primary: "bg-blue-100 text-blue-700"
   };
   return (
-    <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${variants[variant] || variants.default}`}>
+    <span {...props} className={`px-2.5 py-1 text-xs font-semibold rounded-full ${variants[variant]} ${className}`}>
       {children}
     </span>
   );
 };
 
-const Button = ({ children, variant = "primary", className = "", onClick, disabled }) => {
+const Button = ({ children, variant = 'primary', className = '', type = 'button', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) => {
   const baseStyle = "inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed";
-  const variants = {
+  const variants: Record<ButtonVariant, string> = {
     primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 shadow-sm",
     secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-slate-500",
     danger: "bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-sm",
@@ -123,13 +126,13 @@ const Button = ({ children, variant = "primary", className = "", onClick, disabl
     ghost: "bg-transparent text-slate-600 hover:bg-slate-100"
   };
   return (
-    <button onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>
+    <button {...props} type={type} className={`${baseStyle} ${variants[variant]} ${className}`}>
       {children}
     </button>
   );
 };
 
-const Modal = ({ isOpen, onClose, title, children }) => {
+const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -508,7 +511,7 @@ export default function OEEApplication() {
                     </td>
                   </tr>
                 ))}
-                {visibleWorkOrders.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-500">No hay OT que coincidan con los filtros.</td></tr>}
+                {visibleWorkOrders.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No hay OT que coincidan con los filtros.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -886,7 +889,7 @@ export default function OEEApplication() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Comentario (Opcional)</label>
               <textarea 
-                className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500" rows="3"
+                className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500" rows={3}
                 value={lossForm.comment} onChange={(e) => setLossForm({...lossForm, comment: e.target.value})}
               ></textarea>
             </div>
@@ -917,7 +920,7 @@ export default function OEEApplication() {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Detalle de la avería</label>
-              <textarea className="w-full rounded-lg border border-slate-300 p-3" rows="4" placeholder="Describe el síntoma, componente afectado y condición de la máquina." value={ticketForm.detail} onChange={(e) => setTicketForm({...ticketForm, detail: e.target.value})} />
+              <textarea className="w-full rounded-lg border border-slate-300 p-3" rows={4} placeholder="Describe el síntoma, componente afectado y condición de la máquina." value={ticketForm.detail} onChange={(e) => setTicketForm({...ticketForm, detail: e.target.value})} />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Reportado por</label>
@@ -1005,7 +1008,7 @@ export default function OEEApplication() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><StatusList title="OT en revisión" records={reviewRecords} variant="warning" emptyMessage="No hay OT en revisión." selectable /><StatusList title="OT observadas" records={observedRecords} variant="critical" emptyMessage="No hay OT observadas." /><StatusList title="OT aprobadas" records={validatedRecords} variant="success" emptyMessage="No hay OT aprobadas." /></div>
         )}
         <Modal isOpen={observationModalOpen} onClose={() => setObservationModalOpen(false)} title="Observar OT">
-          <div className="space-y-4"><p className="text-sm text-slate-600">Indica el comentario que el operario responsable deberá revisar.</p><textarea className="w-full rounded-lg border border-slate-300 p-3" rows="4" placeholder="Describe la observación..." value={observationComment} onChange={(event) => setObservationComment(event.target.value)} /><Button variant="danger" className="w-full" disabled={!observationComment.trim()} onClick={observeRecord}><Edit size={18}/> Enviar observación</Button></div>
+          <div className="space-y-4"><p className="text-sm text-slate-600">Indica el comentario que el operario responsable deberá revisar.</p><textarea className="w-full rounded-lg border border-slate-300 p-3" rows={4} placeholder="Describe la observación..." value={observationComment} onChange={(event) => setObservationComment(event.target.value)} /><Button variant="danger" className="w-full" disabled={!observationComment.trim()} onClick={observeRecord}><Edit size={18}/> Enviar observación</Button></div>
         </Modal>
       </div>
     );
