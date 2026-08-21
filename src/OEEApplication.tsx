@@ -603,6 +603,7 @@ export default function OEEApplication() {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
     const [lossForm, setLossForm] = useState({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
+    const [editingLossId, setEditingLossId] = useState(null);
     
     const [qtyModalOpen, setQtyModalOpen] = useState(false);
     const [qtyForm, setQtyForm] = useState({ produced: '' });
@@ -624,6 +625,11 @@ export default function OEEApplication() {
 
     const metrics = calculateSessionMetrics(activeSession);
     const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
+    const performanceLosses = activeSession.losses.filter(loss => loss.category === 'performance');
+    const editingPerformanceIndex = performanceLosses.findIndex(loss => loss.id === editingLossId);
+    const performanceStartTime = editingPerformanceIndex >= 0
+      ? (editingPerformanceIndex === 0 ? activeSession.processStart : performanceLosses[editingPerformanceIndex - 1].speedEndTime)
+      : (activeSession.performanceEndTime || activeSession.processStart);
 
     const updateProcessTime = (field, value) => {
       setActiveSession(current => current ? { ...current, [field]: value } : current);
@@ -645,6 +651,59 @@ export default function OEEApplication() {
     const applySharedSupportHours = () => {
       if (!sharedSupportHours) return;
       setSupportDraft(current => current.map(item => ({ ...item, hours: sharedSupportHours })));
+    };
+
+    const normalizeLosses = (session, losses) => {
+      let performanceCursor = session.processStart;
+      const normalizedLosses = losses.map(loss => {
+        if (loss.category !== 'performance') return loss;
+        const duration = elapsedMinutes(performanceCursor, loss.speedEndTime);
+        performanceCursor = loss.speedEndTime;
+        return { ...loss, duration };
+      });
+      const qualityLosses = normalizedLosses.filter(loss => loss.category === 'quality');
+      const reprocessQty = qualityLosses.reduce((sum, loss) => sum + Number(loss.reprocessQty || 0), 0);
+      const wasteQty = qualityLosses.reduce((sum, loss) => sum + Number(loss.wasteQty || 0), 0);
+      const rejectQty = reprocessQty + wasteQty;
+      return {
+        ...session,
+        losses: normalizedLosses,
+        performanceEndTime: performanceCursor === session.processStart ? '' : performanceCursor,
+        reprocessQty,
+        wasteQty,
+        rejectQty,
+        goodQty: Math.max(0, Number(session.realQty || 0) - rejectQty)
+      };
+    };
+
+    const resetLossEditor = () => {
+      setEditingLossId(null);
+      setLossForm({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
+      setMaintenanceTicket(null);
+      setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
+    };
+
+    const openNewLoss = (category) => {
+      resetLossEditor();
+      setLossType(category);
+      setLossModalOpen(true);
+    };
+
+    const openEditLoss = (loss) => {
+      setEditingLossId(loss.id);
+      setLossType(loss.category);
+      setLossForm({
+        cause: loss.cause || '', duration: String(loss.duration || ''),
+        reprocessQty: String(loss.reprocessQty || ''), wasteQty: String(loss.wasteQty || ''),
+        speed: String(loss.speed || ''), speedEndTime: loss.speedEndTime || '', comment: loss.comment || ''
+      });
+      setMaintenanceTicket(loss.ticket || null);
+      setLossModalOpen(true);
+    };
+
+    const deleteLoss = (loss) => {
+      if (!window.confirm(`¿Eliminar el evento "${loss.cause}"? Esta acción actualizará el OEE.`)) return;
+      setActiveSession(current => normalizeLosses(current, current.losses.filter(item => item.id !== loss.id)));
     };
 
     const addSupportOperator = () => {
@@ -676,7 +735,7 @@ export default function OEEApplication() {
 
     const handleAddLoss = () => {
       const speedDuration = lossType === 'performance'
-        ? elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime)
+        ? elapsedMinutes(performanceStartTime, lossForm.speedEndTime)
         : parseInt(lossForm.duration) || 0;
       const newLoss = {
         id: Date.now(),
@@ -694,20 +753,13 @@ export default function OEEApplication() {
         time: new Date().toLocaleTimeString()
       };
       
-      setActiveSession({
-        ...activeSession,
-        losses: [...activeSession.losses, newLoss],
-        performanceEndTime: lossType === 'performance' ? lossForm.speedEndTime : activeSession.performanceEndTime,
-         rejectQty: lossType === 'quality' ? activeSession.rejectQty + newLoss.qty : activeSession.rejectQty,
-        reprocessQty: lossType === 'quality' ? (activeSession.reprocessQty || 0) + newLoss.reprocessQty : activeSession.reprocessQty,
-        wasteQty: lossType === 'quality' ? (activeSession.wasteQty || 0) + newLoss.wasteQty : activeSession.wasteQty,
-        goodQty: lossType === 'quality' ? Math.max(0, activeSession.realQty - activeSession.rejectQty - newLoss.qty) : activeSession.goodQty,
-      });
+      const nextLosses = editingLossId
+        ? activeSession.losses.map(loss => loss.id === editingLossId ? { ...newLoss, id: editingLossId, time: loss.time } : loss)
+        : [...activeSession.losses, newLoss];
+      setActiveSession(normalizeLosses(activeSession, nextLosses));
       
       setLossModalOpen(false);
-      setLossForm({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
-      setMaintenanceTicket(null);
-      setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
+      resetLossEditor();
     };
 
     const handleUpdateQty = () => {
@@ -835,7 +887,7 @@ export default function OEEApplication() {
           <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></button>
 
           <button 
-            onClick={() => { setLossType('availability'); setLossModalOpen(true); }}
+            onClick={() => openNewLoss('availability')}
             className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-amber-500 hover:shadow-md transition-all group"
           >
             <div className="bg-amber-100 p-4 rounded-full text-amber-600 mb-3 group-hover:scale-110 transition-transform">
@@ -846,7 +898,7 @@ export default function OEEApplication() {
           </button>
 
           <button 
-             onClick={() => { setLossType('performance'); setLossModalOpen(true); }}
+             onClick={() => openNewLoss('performance')}
             className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-purple-500 hover:shadow-md transition-all group"
           >
             <div className="bg-purple-100 p-4 rounded-full text-purple-600 mb-3 group-hover:scale-110 transition-transform">
@@ -857,7 +909,7 @@ export default function OEEApplication() {
           </button>
 
           <button 
-             onClick={() => { setLossType('quality'); setLossModalOpen(true); }}
+             onClick={() => openNewLoss('quality')}
             className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group"
           >
             <div className="bg-rose-100 p-4 rounded-full text-rose-600 mb-3 group-hover:scale-110 transition-transform">
@@ -897,9 +949,12 @@ export default function OEEApplication() {
                         )}
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
                       {loss.category === 'performance' ? <><p className="font-bold text-purple-700">{loss.speed} und/min</p><p className="text-sm text-slate-600">{(loss.duration / 60).toFixed(2)} h hasta {loss.speedEndTime}</p></> : loss.duration > 0 && <p className="font-bold text-slate-800">{loss.duration} min</p>}
                       {loss.qty > 0 && <p className="font-bold text-rose-600">{loss.qty} und</p>}
+                      </div>
+                      {role === 'responsible_operator' && <div className="flex gap-1"><button title="Editar evento" aria-label={`Editar ${loss.cause}`} onClick={() => openEditLoss(loss)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Edit size={16}/></button><button title="Eliminar evento" aria-label={`Eliminar ${loss.cause}`} onClick={() => deleteLoss(loss)} className="rounded-lg border border-rose-200 p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={16}/></button></div>}
                     </div>
                   </li>
                 ))}
@@ -944,7 +999,7 @@ export default function OEEApplication() {
           </div>
         </Modal>
 
-        <Modal isOpen={lossModalOpen} onClose={() => setLossModalOpen(false)} title={`Registrar Pérdida de ${lossType === 'availability' ? 'Disponibilidad' : lossType === 'performance' ? 'Rendimiento' : 'Calidad'}`}>
+        <Modal isOpen={lossModalOpen} onClose={() => { setLossModalOpen(false); resetLossEditor(); }} title={`${editingLossId ? 'Editar' : 'Registrar'} ${lossType === 'availability' ? 'Pérdida de Disponibilidad' : lossType === 'performance' ? 'Rendimiento' : 'Pérdida de Calidad'}`}>
           <div className="space-y-4">
             {lossType !== 'performance' && <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Causa de la Pérdida</label>
@@ -963,7 +1018,7 @@ export default function OEEApplication() {
             {lossType === 'performance' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
                 <p className="font-semibold">Velocidad estándar definida: {activeSession.standardSpeed} und/min</p>
-                <p className="mt-1 text-purple-700">La duración se calcula desde {activeSession.performanceEndTime || activeSession.processStart} hasta la hora final registrada.</p>
+                <p className="mt-1 text-purple-700">La duración se calcula desde {performanceStartTime} hasta la hora final registrada.</p>
               </div>
             )}
 
@@ -982,7 +1037,7 @@ export default function OEEApplication() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Hora de finalización de velocidad</label>
                 <TimeField label="Hora y minuto final del tramo" value={lossForm.speedEndTime} onChange={(value) => setLossForm({...lossForm, speedEndTime: value})} />
-                {lossForm.speedEndTime && <p className="mt-1 text-sm text-purple-700">Horas de velocidad: {(elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) / 60).toFixed(2)} h</p>}
+                {lossForm.speedEndTime && <p className="mt-1 text-sm text-purple-700">Horas de velocidad: {(elapsedMinutes(performanceStartTime, lossForm.speedEndTime) / 60).toFixed(2)} h</p>}
               </div>
             )}
 
@@ -1034,10 +1089,10 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={(lossType !== 'performance' && !lossForm.cause) || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(activeSession.performanceEndTime || activeSession.processStart, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={(lossType !== 'performance' && !lossForm.cause) || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
-              Registrar Pérdida
+              {editingLossId ? 'Guardar cambios' : 'Registrar evento'}
             </Button>
           </div>
         </Modal>
