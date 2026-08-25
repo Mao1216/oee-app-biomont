@@ -77,8 +77,9 @@ const MACHINES = [
 ];
 
 const LOSS_CAUSES = {
-  availability: ["Cambio de formato", "Limpieza profunda", "Mantenimiento preventivo", "Avería mecánica", "Avería eléctrica", "Falta de material"],
-  performance: ["Microparada de máquina", "Microparada de línea", "Atasco de material", "Ajuste menor"],
+  planned_availability: ["Limpieza programada", "Cambio de formatos", "Mantenimiento preventivo", "Otros"],
+  availability: ["Corte de servicios", "Avería mecánica", "Avería eléctrica", "Bloqueos", "Otros"],
+  performance: ["Microparada de máquina", "Microparada de línea", "Atasco de material", "Ajuste menor", "Otros"],
   quality: ["Blister mal sellado", "Falta de lote/vencimiento", "Volumen incorrecto", "Contaminación cruzada"]
 };
 const CHART_DATA_TREND = [];
@@ -240,6 +241,7 @@ export default function OEEApplication() {
           machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
           plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
           standardSpeed: parsePlannedQuantity(getImportValue(row, ['Velocidad estándar', 'Velocidad estandar', 'Velocidad estándar (und/min)', 'Velocidad', 'Standard speed'])),
+          plannedWorkerHours: parsePlannedQuantity(getImportValue(row, ['Horas planificadas del operario', 'Horas planificadas', 'Horas operario', 'Planned worker hours'])),
           status: 'pending_assignment',
           date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
         };
@@ -261,9 +263,9 @@ export default function OEEApplication() {
   const downloadWorkOrderTemplate = () => {
     const worksheet = XLSX.utils.json_to_sheet([{
       'Código OT': '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
-      'Velocidad estándar (und/min)': '', Fecha: ''
+      'Velocidad estándar (und/min)': '', 'Horas planificadas del operario': '', Fecha: ''
     }]);
-    worksheet['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 14 }];
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 32 }, { wch: 14 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Ordenes OT');
     XLSX.writeFile(workbook, 'Plantilla_Ordenes_OT_Biomont.xlsx');
@@ -284,7 +286,7 @@ export default function OEEApplication() {
     // Calculate total lost time by type
     let availLoss = 0, perfLoss = 0;
     session.losses.forEach(l => {
-      if (l.category === 'availability') availLoss += parseInt(l.duration);
+      if (l.category === 'availability' || l.category === 'planned_availability') availLoss += parseInt(l.duration);
       if (l.category === 'performance') perfLoss += parseInt(l.duration);
     });
 
@@ -478,7 +480,7 @@ export default function OEEApplication() {
       return summary;
     }, {});
     const trendData = sourceRecords.map(record => ({ name: record.workOrderId || record.id, oee: Number(record.metrics?.oee || 0), a: Number(record.metrics?.a || 0), p: Number(record.metrics?.p || 0), q: Number(record.metrics?.q || 0) }));
-    const lossMap = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability').reduce((map, loss) => {
+    const lossMap = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability' || loss.category === 'planned_availability').reduce((map, loss) => {
       map[loss.cause] = (map[loss.cause] || 0) + Number(loss.duration || 0);
       return map;
     }, {});
@@ -488,6 +490,21 @@ export default function OEEApplication() {
     })));
     const configuredTarget = sourceRecords.find(record => (!dashboardProduct || record.product === dashboardProduct) && Number(record.targetWeight) > 0)?.targetWeight;
     const centralWeight = Number(configuredTarget) || (overweightData.length ? overweightData.reduce((sum, item) => sum + item.weight * item.quantity, 0) / overweightData.reduce((sum, item) => sum + item.quantity, 0) : 0);
+    const laborByWorker = sourceRecords.reduce((summary: Record<string, { worker: string; planned: number; recorded: number; processes: number }>, record) => {
+      const processHours = elapsedMinutes(record.processStart, record.processEnd) / 60;
+      const responsible = record.operator || 'Sin responsable';
+      if (!summary[responsible]) summary[responsible] = { worker: responsible, planned: 0, recorded: 0, processes: 0 };
+      summary[responsible].planned += Number(record.plannedWorkerHours) || processHours;
+      summary[responsible].recorded += processHours;
+      summary[responsible].processes += 1;
+      (record.supportOperators || []).forEach(operator => {
+        if (!summary[operator.name]) summary[operator.name] = { worker: operator.name, planned: 0, recorded: 0, processes: 0 };
+        summary[operator.name].recorded += Number(operator.hours) || 0;
+        summary[operator.name].processes += 1;
+      });
+      return summary;
+    }, {} as Record<string, { worker: string; planned: number; recorded: number; processes: number }>);
+    const laborPlanningData = Object.values(laborByWorker) as Array<{ worker: string; planned: number; recorded: number; processes: number }>;
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
@@ -508,6 +525,13 @@ export default function OEEApplication() {
             <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Control de sobrepeso</h3>{overweightData.length ? <div className="h-64"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="sequence" name="Registro"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Promedio"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pesos registrados para el filtro.</p>}</Card>
           </div>
           <Card className="p-6"><h3 className="font-bold text-slate-800">Descarte de materiales para planificación</h3><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.keys(materialSummary).length ? Object.entries(materialSummary).map(([key, quantity]) => { const [type, unit] = key.split('|'); return <div key={key} className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Material de {type.toLowerCase()}</p><p className="text-2xl font-bold text-slate-800">{Number(quantity).toLocaleString()} <span className="text-sm font-medium">{unit}</span></p></div>; }) : <p className="text-slate-500">Sin descartes registrados.</p>}</div></Card>
+          <Card className="p-6">
+            <div className="mb-5"><h3 className="font-bold text-slate-800">Planificación de horas en planta</h3><p className="text-sm text-slate-500">Compara las horas planificadas en la OT con las horas que cada trabajador permaneció dentro del proceso.</p></div>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="h-72"><ResponsiveContainer><BarChart data={laborPlanningData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="worker" tick={{fontSize:10}}/><YAxis unit=" h"/><RechartsTooltip/><Legend/><Bar dataKey="planned" name="Horas planificadas" fill={COLORS.primary}/><Bar dataKey="recorded" name="Horas registradas" fill={COLORS.success}/></BarChart></ResponsiveContainer></div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Trabajador</th><th className="p-2 text-right">Plan.</th><th className="p-2 text-right">Registr.</th><th className="p-2 text-right">Procesos</th></tr></thead><tbody>{laborPlanningData.map(item => <tr key={item.worker} className="border-b border-slate-100"><td className="p-2 font-medium">{item.worker}</td><td className="p-2 text-right">{item.planned.toFixed(2)} h</td><td className="p-2 text-right">{item.recorded.toFixed(2)} h</td><td className="p-2 text-right">{item.processes}</td></tr>)}</tbody></table></div>
+            </div>
+          </Card>
         </>}
       </div>
     );
@@ -581,8 +605,7 @@ export default function OEEApplication() {
                         <div className="flex min-w-56 items-center gap-2"><select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[ot.id] || ''} onChange={(event) => assignResponsibleOperator(ot, event.target.value)}><option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
                       ) : (
                         <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'pending_assignment'} onClick={() => {
-                          const now = currentTimeInput();
-                           setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: now, processEnd: now, performanceEndTime: ''});
+                           setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], supportOperatorsConfirmed: false, overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
                           setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress' } : order));
                           setCurrentView('active_production');
                         }}>Registrar OEE <ArrowRight size={16} /></Button>
@@ -610,13 +633,13 @@ export default function OEEApplication() {
     const [ticketModalOpen, setTicketModalOpen] = useState(false);
     const [maintenanceTicket, setMaintenanceTicket] = useState(null);
     const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
-    const [supportModalOpen, setSupportModalOpen] = useState(false);
+    const [supportModalOpen, setSupportModalOpen] = useState(!activeSession?.supportOperatorsConfirmed);
     const [sharedSupportHours, setSharedSupportHours] = useState('');
     const [supportOperators, setSupportOperators] = useState(INITIAL_SUPPORT_OPERATORS);
     const [supportDraft, setSupportDraft] = useState([]);
     const [newSupportName, setNewSupportName] = useState('');
     const [overweightModalOpen, setOverweightModalOpen] = useState(false);
-    const [overweightDraft, setOverweightDraft] = useState([{ weight: '', quantity: '' }]);
+    const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
     const [targetWeight, setTargetWeight] = useState('');
     const [materialModalOpen, setMaterialModalOpen] = useState(false);
     const [materialForm, setMaterialForm] = useState({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
@@ -716,8 +739,14 @@ export default function OEEApplication() {
     };
 
     const saveSupportOperators = () => {
-      setActiveSession(current => ({ ...current, supportOperators: supportDraft }));
+      setActiveSession(current => ({ ...current, supportOperators: supportDraft, supportOperatorsConfirmed: true }));
       setSupportModalOpen(false);
+    };
+
+    const cancelSupportSetup = () => {
+      setSupportModalOpen(false);
+      setActiveSession(null);
+      setCurrentView('work_orders');
     };
 
     const handleCreateMaintenanceTicket = () => {
@@ -726,7 +755,7 @@ export default function OEEApplication() {
       setMaintenanceTicket({
         code: ticketCode,
         equipment: activeSession.machine,
-        cause: lossType === 'performance' ? 'Tramo de velocidad' : lossForm.cause,
+        cause: lossForm.cause,
         ...ticketForm,
         createdAt: date.toLocaleTimeString()
       });
@@ -773,11 +802,30 @@ export default function OEEApplication() {
       setQtyForm({ produced: '' });
     };
 
+    const updateSampleSize = (sampleIndex, value) => {
+      const sampleSize = Math.max(0, Math.min(100, parseInt(value) || 0));
+      setOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? {
+        ...sample,
+        sampleSize: value,
+        weights: Array.from({ length: sampleSize }, (_, weightIndex) => sample.weights[weightIndex] || '')
+      } : sample));
+    };
+
+    const updateSampleWeight = (sampleIndex, weightIndex, value) => {
+      setOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? {
+        ...sample,
+        weights: sample.weights.map((weight, index) => index === weightIndex ? value : weight)
+      } : sample));
+    };
+
+    const validOverweightSamples = overweightDraft.length > 0 && overweightDraft.every(sample => Number(sample.sampleSize) > 0 && sample.weights.length === Number(sample.sampleSize) && sample.weights.every(weight => Number(weight) > 0));
+
     const saveOverweights = () => {
-      const validRows = overweightDraft.filter(item => Number(item.weight) > 0 && Number(item.quantity) > 0).map(item => ({ id: Date.now() + Math.random(), weight: Number(item.weight), quantity: Number(item.quantity) }));
+      if (!validOverweightSamples) return;
+      const validRows = overweightDraft.flatMap((sample, sampleIndex) => sample.weights.map((weight, weightIndex) => ({ id: Date.now() + Math.random(), sampleId: `M-${Date.now()}-${sampleIndex + 1}`, sampleSize: Number(sample.sampleSize), measurement: weightIndex + 1, weight: Number(weight), quantity: 1 })));
       if (!validRows.length) return;
       setActiveSession(current => ({ ...current, targetWeight: Number(targetWeight) || current.targetWeight, overweights: [...(current.overweights || []), ...validRows] }));
-      setOverweightDraft([{ weight: '', quantity: '' }]);
+      setOverweightDraft([{ sampleSize: '', weights: [''] }]);
       setOverweightModalOpen(false);
     };
 
@@ -820,12 +868,8 @@ export default function OEEApplication() {
           <div className="flex gap-6 text-sm">
             <div className="text-center">
               <p className="text-slate-400">Operador</p>
-              <div className="flex items-center gap-2">
-                <p className="font-semibold">{activeSession.operator}</p>
-                <button onClick={openSupportModal} title="Registrar operarios de apoyo" className="rounded-full bg-slate-700 p-1.5 text-blue-200 hover:bg-slate-600 hover:text-white">
-                  <Users size={16} />
-                </button>
-              </div>
+              <p className="font-semibold">{activeSession.operator}</p>
+              <p className="text-xs text-slate-400">{activeSession.supportOperators.length} apoyo(s)</p>
             </div>
             <div className="text-center">
               <div className="flex items-end gap-2"><TimeField label="Inicio del proceso" value={activeSession.processStart} onChange={(value) => updateProcessTime('processStart', value)}/><span className="pb-3 text-slate-400">a</span><TimeField label="Fin del proceso" value={activeSession.processEnd} onChange={(value) => updateProcessTime('processEnd', value)}/></div>
@@ -883,18 +927,31 @@ export default function OEEApplication() {
             <span className="font-bold text-slate-800 text-lg">Registrar Producción</span>
             <span className="text-sm text-slate-500">Actualizar contador</span>
           </button>
-          <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-3 rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><span className="text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Peso y cantidad de productos</span></button>
-          <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></button>
-
-          <button 
+          <button
+             onClick={() => openNewLoss('quality')}
+            className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group"
+          >
+            <div className="bg-rose-100 p-4 rounded-full text-rose-600 mb-3 group-hover:scale-110 transition-transform"><AlertTriangle size={32} /></div>
+            <span className="font-bold text-slate-800 text-lg">Rechazos</span>
+            <span className="text-sm text-slate-500">Reproceso y desperdicio</span>
+          </button>
+          <button
+            onClick={() => openNewLoss('planned_availability')}
+            className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-sky-500 hover:shadow-md transition-all group"
+          >
+            <div className="bg-sky-100 p-4 rounded-full text-sky-700 mb-3 group-hover:scale-110 transition-transform"><CheckSquare size={32} /></div>
+            <span className="font-bold text-slate-800 text-lg">Detenciones planificadas</span>
+            <span className="text-sm text-slate-500">Disponibilidad</span>
+          </button>
+          <button
             onClick={() => openNewLoss('availability')}
             className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-amber-500 hover:shadow-md transition-all group"
           >
             <div className="bg-amber-100 p-4 rounded-full text-amber-600 mb-3 group-hover:scale-110 transition-transform">
               <Pause size={32} />
             </div>
-            <span className="font-bold text-slate-800 text-lg">Detención (Disp.)</span>
-            <span className="text-sm text-slate-500">Averías, limpieza, etc.</span>
+            <span className="font-bold text-slate-800 text-lg">Detenciones no planificadas</span>
+            <span className="text-sm text-slate-500">Disponibilidad</span>
           </button>
 
           <button 
@@ -904,20 +961,11 @@ export default function OEEApplication() {
             <div className="bg-purple-100 p-4 rounded-full text-purple-600 mb-3 group-hover:scale-110 transition-transform">
               <AlertOctagon size={32} />
             </div>
-            <span className="font-bold text-slate-800 text-lg">Pérdida de Vel. (Rend.)</span>
-            <span className="text-sm text-slate-500">Microparadas, atascos</span>
+            <span className="font-bold text-slate-800 text-lg">Pérdida de velocidad</span>
+            <span className="text-sm text-slate-500">Rendimiento</span>
           </button>
-
-          <button 
-             onClick={() => openNewLoss('quality')}
-            className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-rose-500 hover:shadow-md transition-all group"
-          >
-            <div className="bg-rose-100 p-4 rounded-full text-rose-600 mb-3 group-hover:scale-110 transition-transform">
-              <AlertTriangle size={32} />
-            </div>
-            <span className="font-bold text-slate-800 text-lg">Rechazos (Calidad)</span>
-            <span className="text-sm text-slate-500">Defectos, descartes</span>
-          </button>
+          <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-3 rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><span className="text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Muestreos y pesos medidos</span></button>
+          <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></button>
         </div>
 
         {/* Recent Events Log */}
@@ -934,10 +982,11 @@ export default function OEEApplication() {
                   <li key={loss.id} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-lg ${
+                        loss.category === 'planned_availability' ? 'bg-sky-100 text-sky-700' :
                         loss.category === 'availability' ? 'bg-amber-100 text-amber-700' :
                         loss.category === 'performance' ? 'bg-purple-100 text-purple-700' : 'bg-rose-100 text-rose-700'
                       }`}>
-                        {loss.category === 'availability' ? <Pause size={18}/> : loss.category === 'performance' ? <AlertOctagon size={18}/> : <AlertTriangle size={18}/>}
+                        {loss.category === 'planned_availability' ? <CheckSquare size={18}/> : loss.category === 'availability' ? <Pause size={18}/> : loss.category === 'performance' ? <AlertOctagon size={18}/> : <AlertTriangle size={18}/>}
                       </div>
                       <div>
                         <p className="font-medium text-slate-800">{loss.cause}</p>
@@ -972,9 +1021,9 @@ export default function OEEApplication() {
         </div>
 
         {/* Modals */}
-        <Modal isOpen={supportModalOpen} onClose={() => setSupportModalOpen(false)} title="Registrar operarios de apoyo">
+        <Modal isOpen={supportModalOpen} onClose={cancelSupportSetup} title="Paso 1 de 2: operarios de apoyo">
           <div className="space-y-5">
-            <p className="text-sm text-slate-600">Selecciona uno o varios operarios de apoyo e indica cuántas horas participaron en el proceso.</p>
+            <p className="text-sm text-slate-600">Antes de abrir el panel OEE, registra todos los operarios de apoyo e indica cuántas horas participaron. Si no hubo apoyos, confirma la lista vacía para continuar.</p>
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
               <label className="block text-sm font-semibold text-blue-900">Asignar las mismas horas a todos</label>
               <div className="mt-2 flex gap-2">
@@ -995,14 +1044,14 @@ export default function OEEApplication() {
               })}
             </div>
             <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-3"><label className="mb-2 block text-sm font-semibold text-blue-900">Añadir operario no registrado</label><div className="flex gap-2"><input className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" placeholder="Nombre completo" value={newSupportName} onChange={(event) => setNewSupportName(event.target.value)}/><Button variant="secondary" className="!px-3 !py-2" disabled={!newSupportName.trim()} onClick={addSupportOperator}><Plus size={16}/> Añadir</Button></div></div>
-            <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={() => setSupportModalOpen(false)}>Cancelar</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Guardar todos ({supportDraft.length})</Button></div>
+            <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={cancelSupportSetup}>Cancelar registro OEE</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Confirmar y continuar ({supportDraft.length})</Button></div>
           </div>
         </Modal>
 
-        <Modal isOpen={lossModalOpen} onClose={() => { setLossModalOpen(false); resetLossEditor(); }} title={`${editingLossId ? 'Editar' : 'Registrar'} ${lossType === 'availability' ? 'Pérdida de Disponibilidad' : lossType === 'performance' ? 'Rendimiento' : 'Pérdida de Calidad'}`}>
+        <Modal isOpen={lossModalOpen} onClose={() => { setLossModalOpen(false); resetLossEditor(); }} title={`${editingLossId ? 'Editar' : 'Registrar'} ${lossType === 'planned_availability' ? 'Detención planificada - Disponibilidad' : lossType === 'availability' ? 'Detención no planificada - Disponibilidad' : lossType === 'performance' ? 'Pérdida de velocidad' : 'Rechazos'}`}>
           <div className="space-y-4">
-            {lossType !== 'performance' && <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Causa de la Pérdida</label>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'quality' ? 'Tipo de rechazo' : 'Causa'}</label>
               <select 
                 className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500"
                 value={lossForm.cause} onChange={(e) => {
@@ -1013,7 +1062,7 @@ export default function OEEApplication() {
                 <option value="">Seleccione una causa...</option>
                 {LOSS_CAUSES[lossType].map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-            </div>}
+            </div>
             
             {lossType === 'performance' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
@@ -1041,7 +1090,7 @@ export default function OEEApplication() {
               </div>
             )}
 
-            {lossType === 'availability' && (
+            {(lossType === 'availability' || lossType === 'planned_availability') && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Duración (minutos)</label>
                 <input 
@@ -1089,7 +1138,7 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={(lossType !== 'performance' && !lossForm.cause) || (lossType === 'availability' && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={!lossForm.cause || ((lossType === 'availability' || lossType === 'planned_availability') && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               {editingLossId ? 'Guardar cambios' : 'Registrar evento'}
@@ -1152,7 +1201,16 @@ export default function OEEApplication() {
           </div>
         </Modal>
         <Modal isOpen={overweightModalOpen} onClose={() => setOverweightModalOpen(false)} title="Registrar sobrepeso">
-          <div className="space-y-4"><p className="text-sm text-slate-600">Registra uno o varios pesos y la cantidad de productos correspondiente a cada medición.</p><div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={targetWeight} onChange={(event) => setTargetWeight(event.target.value)} placeholder="Ej. 250"/></div>{overweightDraft.map((item, index) => <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2 rounded-lg border border-slate-200 p-3"><div><label className="text-xs font-semibold text-slate-600">Peso (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={item.weight} onChange={(event) => setOverweightDraft(current => current.map((row, rowIndex) => rowIndex === index ? {...row, weight:event.target.value} : row))}/></div><div><label className="text-xs font-semibold text-slate-600">Cantidad</label><input type="number" min="1" className="mt-1 w-full rounded border border-slate-300 p-2" value={item.quantity} onChange={(event) => setOverweightDraft(current => current.map((row, rowIndex) => rowIndex === index ? {...row, quantity:event.target.value} : row))}/></div><button disabled={overweightDraft.length === 1} onClick={() => setOverweightDraft(current => current.filter((_, rowIndex) => rowIndex !== index))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>)}<Button variant="secondary" className="w-full" onClick={() => setOverweightDraft(current => [...current, {weight:'',quantity:''}])}><Plus size={18}/> Agregar otro peso</Button><Button className="w-full" disabled={!overweightDraft.some(item => Number(item.weight)>0 && Number(item.quantity)>0)} onClick={saveOverweights}>Guardar sobrepesos</Button></div>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">Indica la cantidad muestreada y registra el peso individual de cada unidad medida.</p>
+            <div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={targetWeight} onChange={(event) => setTargetWeight(event.target.value)} placeholder="Ej. 250"/></div>
+            {overweightDraft.map((sample, sampleIndex) => <div key={sampleIndex} className="space-y-3 rounded-lg border border-slate-200 p-4">
+              <div className="flex items-end gap-2"><div className="flex-1"><label className="text-sm font-semibold text-slate-700">Cantidad muestreada</label><input type="number" min="1" max="100" className="mt-1 w-full rounded border border-slate-300 p-2" value={sample.sampleSize} onChange={(event) => updateSampleSize(sampleIndex, event.target.value)} placeholder="Ej. 5"/></div><button aria-label={`Eliminar muestreo ${sampleIndex + 1}`} disabled={overweightDraft.length === 1} onClick={() => setOverweightDraft(current => current.filter((_, index) => index !== sampleIndex))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>
+              {sample.weights.length > 0 && Number(sample.sampleSize) > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{sample.weights.map((weight, weightIndex) => <div key={weightIndex}><label className="text-xs font-semibold text-slate-500">Peso {weightIndex + 1} (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={weight} onChange={(event) => updateSampleWeight(sampleIndex, weightIndex, event.target.value)}/></div>)}</div>}
+            </div>)}
+            <Button variant="secondary" className="w-full" onClick={() => setOverweightDraft(current => [...current, {sampleSize:'',weights:['']}])}><Plus size={18}/> Agregar otro muestreo</Button>
+            <Button className="w-full" disabled={!validOverweightSamples} onClick={saveOverweights}>Guardar muestreos</Button>
+          </div>
         </Modal>
         <Modal isOpen={materialModalOpen} onClose={() => setMaterialModalOpen(false)} title="Registrar descarte de material">
           <div className="space-y-4"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Tipo de material</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.type} onChange={(event) => setMaterialForm({...materialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option></select></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Material descartado</label><input className="w-full rounded-lg border border-slate-300 p-3" placeholder="Ej. blíster, frasco, caja..." value={materialForm.material} onChange={(event) => setMaterialForm({...materialForm,material:event.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Cantidad</label><input type="number" min="0" className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.quantity} onChange={(event) => setMaterialForm({...materialForm,quantity:event.target.value})}/></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Unidad</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.unit} onChange={(event) => setMaterialForm({...materialForm,unit:event.target.value})}><option>unidades</option><option>kg</option><option>metros</option></select></div></div><textarea className="w-full rounded-lg border border-slate-300 p-3" placeholder="Comentario opcional" value={materialForm.comment} onChange={(event) => setMaterialForm({...materialForm,comment:event.target.value})}/><Button className="w-full" disabled={!materialForm.material.trim() || Number(materialForm.quantity)<=0} onClick={saveMaterialDiscard}>Guardar descarte</Button></div>
@@ -1363,4 +1421,5 @@ export default function OEEApplication() {
     </div>
   );
 }
+
 
