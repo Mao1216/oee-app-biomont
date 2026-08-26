@@ -49,21 +49,24 @@ const currentTimeInput = () => new Date().toTimeString().slice(0, 5);
 
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
-const RESPONSIBLE_OPERATORS = [{ id: "RESP-001", name: "Juanito" }];
 const INITIAL_SUPPORT_OPERATORS = [
   { id: "OP-042", name: "Carlos Mendoza" },
   { id: "OP-051", name: "María Torres" },
   { id: "OP-063", name: "José Ramírez" },
   { id: "OP-078", name: "Lucía Flores" }
 ];
+const PRODUCTION_LINE_OPERATORS = [
+  { id: "OP-B01-001", name: "Omar Miraya", machines: ["Blistera B-01", "B-01"] },
+  { id: "OP-B01-002", name: "Aaron Flores", machines: ["Blistera B-01", "B-01"] },
+  { id: "OP-B01-003", name: "Josue Huapaya", machines: ["Blistera B-01", "B-01"] }
+];
 const DEMO_CREDENTIALS = {
   supervisor: { username: "molin", password: "password", name: "Molin" },
-  responsible_operator: { username: "Juanito", password: "password", name: "Juanito" }
+  responsible_operator: { username: "Josue.Huapaya", password: "password", name: "Josue Huapaya", id: "OP-B01-003" }
 };
 
 const WORK_ORDER_STATUS: Record<string, { label: string; variant: BadgeVariant }> = {
-  pending_assignment: { label: 'Pendiente de asignar', variant: 'warning' },
-  assigned: { label: 'Asignado', variant: 'primary' },
+  not_started: { label: 'Sin iniciar', variant: 'default' },
   in_progress: { label: 'En proceso', variant: 'success' },
   review: { label: 'En revisión', variant: 'warning' },
   observed: { label: 'Observado', variant: 'critical' },
@@ -173,14 +176,14 @@ export default function OEEApplication() {
   const [role, setRole] = useState(null); // 'supervisor', 'responsible_operator'
   const [currentView, setCurrentView] = useState('dashboard');
   const [loginRole, setLoginRole] = useState('');
+  const [loginOperatorId, setLoginOperatorId] = useState('OP-B01-003');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   
   // App Data State
   const [records, setRecords] = useState([]);
   const [workOrders, setWorkOrders] = useState([]);
   const [importMessage, setImportMessage] = useState('');
-  const [responsibleAssignments, setResponsibleAssignments] = useState({});
-  const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', product: '', line: '', quantity: '', status: '', responsible: '' });
+  const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', lot: '', product: '', line: '', quantity: '', status: '', registrar: '' });
   const workOrdersFileInputRef = useRef(null);
   const [selectedLiveOrder, setSelectedLiveOrder] = useState(null);
   const [dashboardProduct, setDashboardProduct] = useState('');
@@ -188,11 +191,13 @@ export default function OEEApplication() {
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(null);
 
-  const currentUser = role ? DEMO_CREDENTIALS[role] : null;
+  const currentUser = role === 'responsible_operator'
+    ? (PRODUCTION_LINE_OPERATORS.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
+    : role ? DEMO_CREDENTIALS[role] : null;
 
   const handleLogin = (event) => {
     event.preventDefault();
-    if (!loginRole) return;
+    if (!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)) return;
     setRole(loginRole);
     setIsLoggedIn(true);
     setCurrentView(loginRole === 'responsible_operator' ? 'work_orders' : 'dashboard');
@@ -236,13 +241,15 @@ export default function OEEApplication() {
         const statusText = String(getImportValue(row, ['Estado', 'Status'])).toLowerCase();
         return {
           id,
+          lot: String(getImportValue(row, ['Lote', 'Número de lote', 'Numero de lote', 'Lot'])).trim() || 'Sin lote',
           product: String(getImportValue(row, ['Producto', 'Descripción', 'Descripcion', 'Material'])).trim() || 'Sin producto',
           line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
           machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
           plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
           standardSpeed: parsePlannedQuantity(getImportValue(row, ['Velocidad estándar', 'Velocidad estandar', 'Velocidad estándar (und/min)', 'Velocidad', 'Standard speed'])),
           plannedWorkerHours: parsePlannedQuantity(getImportValue(row, ['Horas planificadas del operario', 'Horas planificadas', 'Horas operario', 'Planned worker hours'])),
-          status: 'pending_assignment',
+          status: 'not_started',
+          registrar: '',
           date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
         };
       }).filter(order => order.id);
@@ -262,18 +269,13 @@ export default function OEEApplication() {
 
   const downloadWorkOrderTemplate = () => {
     const worksheet = XLSX.utils.json_to_sheet([{
-      'Código OT': '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
+      'Código OT': '', Lote: '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
       'Velocidad estándar (und/min)': '', 'Horas planificadas del operario': '', Fecha: ''
     }]);
-    worksheet['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 32 }, { wch: 14 }];
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 32 }, { wch: 14 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Ordenes OT');
     XLSX.writeFile(workbook, 'Plantilla_Ordenes_OT_Biomont.xlsx');
-  };
-
-  const assignResponsibleOperator = (order, operatorId) => {
-    setResponsibleAssignments(current => ({ ...current, [order.id]: operatorId }));
-    setWorkOrders(current => current.map(workOrder => workOrder.id === order.id ? { ...workOrder, status: operatorId ? 'assigned' : 'pending_assignment' } : workOrder));
   };
 
   // Helper to calculate active session OEE
@@ -343,7 +345,8 @@ export default function OEEApplication() {
                 <option value="responsible_operator">Operario responsable</option>
               </select>
             </div>
-            <Button className="w-full !py-3" type="submit" disabled={!loginRole}><User size={18} /> Ingresar</Button>
+            {loginRole === 'responsible_operator' && <div><label className="block text-sm font-semibold text-slate-700 mb-2">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{PRODUCTION_LINE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
+            <Button className="w-full !py-3" type="submit" disabled={!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)}><User size={18} /> Ingresar</Button>
           </form>
         </div>
       </div>
@@ -538,17 +541,19 @@ export default function OEEApplication() {
   };
 
   const WorkOrdersView = () => {
-    const activeStatuses = ['pending_assignment', 'assigned', 'in_progress'];
+    const activeStatuses = ['not_started', 'in_progress'];
     const normalized = (value) => String(value || '').toLowerCase();
     const visibleWorkOrders = workOrders.filter((order) => {
       if (!activeStatuses.includes(order.status)) return false;
-      const responsible = RESPONSIBLE_OPERATORS.find(operator => operator.id === responsibleAssignments[order.id])?.name || '';
+      const operatorHasAccess = role === 'supervisor' || PRODUCTION_LINE_OPERATORS.some(operator => operator.id === currentUser?.id && operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine))));
+      if (!operatorHasAccess) return false;
       return normalized(order.id).includes(normalized(workOrderFilters.code))
+        && normalized(order.lot).includes(normalized(workOrderFilters.lot))
         && normalized(order.product).includes(normalized(workOrderFilters.product))
         && normalized(`${order.line} ${order.machine}`).includes(normalized(workOrderFilters.line))
         && String(order.plannedQty).includes(workOrderFilters.quantity.replace(/[^0-9]/g, ''))
         && (!workOrderFilters.status || order.status === workOrderFilters.status)
-        && normalized(responsible).includes(normalized(workOrderFilters.responsible));
+        && normalized(order.registrar || 'Sin registrador').includes(normalized(workOrderFilters.registrar));
     });
     const updateFilter = (field, value) => setWorkOrderFilters(current => ({ ...current, [field]: value }));
 
@@ -557,7 +562,7 @@ export default function OEEApplication() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
-            <p className="text-slate-500">{role === 'supervisor' ? 'Carga, consulta y asigna el operario responsable de las OT.' : 'Seleccione una OT para iniciar el registro de producción.'}</p>
+            <p className="text-slate-500">{role === 'supervisor' ? 'Carga y consulta las OT por lote, línea y registrador.' : 'Se muestran las OT disponibles para tu línea de producción.'}</p>
           </div>
           <div className="flex items-center gap-3">
             {role === 'supervisor' && (
@@ -578,42 +583,43 @@ export default function OEEApplication() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
-                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">{role === 'supervisor' ? 'Operario responsable / Vista' : 'Acción'}</th>
+                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
                 </tr>
                 {role === 'supervisor' && (
                   <tr className="border-b border-slate-200 bg-white">
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar lote" value={workOrderFilters.lot} onChange={(e) => updateFilter('lot', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
                     <th className="p-2"></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
-                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.responsible} onChange={(e) => updateFilter('responsible', e.target.value)}><option value="">Todos</option><option value="Juanito">Juanito</option></select></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.registrar} onChange={(e) => updateFilter('registrar', e.target.value)}><option value="">Todos</option><option value="Sin registrador">Sin registrador</option>{PRODUCTION_LINE_OPERATORS.map(operator => <option key={operator.id} value={operator.name}>{operator.name}</option>)}</select></th>
                   </tr>
                 )}
               </thead>
               <tbody>
                 {visibleWorkOrders.map((ot) => (
                   <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                    <td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 text-slate-600">{ot.product}</td>
+                    <td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 font-semibold text-blue-700">{ot.lot}</td><td className="p-4 text-slate-600">{ot.product}</td>
                     <td className="p-4"><div className="text-sm text-slate-800">{ot.line}</div><div className="text-xs text-slate-500">{ot.machine}</div></td>
                     <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
                     <td className="p-4 font-semibold text-purple-700">{Number(ot.standardSpeed || 0).toLocaleString()} und/min</td>
                     <td className="p-4"><Badge variant={WORK_ORDER_STATUS[ot.status].variant}>{WORK_ORDER_STATUS[ot.status].label}</Badge></td>
                     <td className="p-4">
                       {role === 'supervisor' ? (
-                        <div className="flex min-w-56 items-center gap-2"><select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={responsibleAssignments[ot.id] || ''} onChange={(event) => assignResponsibleOperator(ot, event.target.value)}><option value="">Selecciona responsable</option>{RESPONSIBLE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
+                        <div className="flex min-w-48 items-center gap-2"><span className="flex-1 text-sm font-medium text-slate-700">{ot.registrar || 'Sin registrador'}</span>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
                       ) : (
-                        <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'pending_assignment'} onClick={() => {
-                           setActiveSession({...ot, operator: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], supportOperatorsConfirmed: false, overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
-                          setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress' } : order));
+                        <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'in_progress' && ot.registrar !== currentUser.name} onClick={() => {
+                           setActiveSession({...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
+                          setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress', registrar: currentUser.name } : order));
                           setCurrentView('active_production');
-                        }}>Registrar OEE <ArrowRight size={16} /></Button>
+                        }}>{ot.status === 'in_progress' ? 'Continuar OEE' : 'Registrar OEE'} <ArrowRight size={16} /></Button>
                       )}
                     </td>
                   </tr>
                 ))}
-                {visibleWorkOrders.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No hay OT cargadas. Descarga la plantilla y carga el Excel para comenzar.</td></tr>}
+                {visibleWorkOrders.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-500">No hay OT disponibles para los filtros o tu línea de producción.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -633,10 +639,11 @@ export default function OEEApplication() {
     const [ticketModalOpen, setTicketModalOpen] = useState(false);
     const [maintenanceTicket, setMaintenanceTicket] = useState(null);
     const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
-    const [supportModalOpen, setSupportModalOpen] = useState(!activeSession?.supportOperatorsConfirmed);
+    const [supportModalOpen, setSupportModalOpen] = useState(false);
     const [sharedSupportHours, setSharedSupportHours] = useState('');
-    const [supportOperators, setSupportOperators] = useState(INITIAL_SUPPORT_OPERATORS);
+    const [supportOperators, setSupportOperators] = useState([...PRODUCTION_LINE_OPERATORS, ...INITIAL_SUPPORT_OPERATORS]);
     const [supportDraft, setSupportDraft] = useState([]);
+    const [plannedSupportDraft, setPlannedSupportDraft] = useState([]);
     const [newSupportName, setNewSupportName] = useState('');
     const [overweightModalOpen, setOverweightModalOpen] = useState(false);
     const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
@@ -647,6 +654,7 @@ export default function OEEApplication() {
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
     const metrics = calculateSessionMetrics(activeSession);
+    const supportCandidates = [...PRODUCTION_LINE_OPERATORS, ...supportOperators].filter((operator, index, list) => list.findIndex(item => item.id === operator.id) === index);
     const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
     const performanceLosses = activeSession.losses.filter(loss => loss.category === 'performance');
     const editingPerformanceIndex = performanceLosses.findIndex(loss => loss.id === editingLossId);
@@ -708,6 +716,7 @@ export default function OEEApplication() {
 
     const openNewLoss = (category) => {
       resetLossEditor();
+      setPlannedSupportDraft([]);
       setLossType(category);
       setLossModalOpen(true);
     };
@@ -721,6 +730,7 @@ export default function OEEApplication() {
         speed: String(loss.speed || ''), speedEndTime: loss.speedEndTime || '', comment: loss.comment || ''
       });
       setMaintenanceTicket(loss.ticket || null);
+      setPlannedSupportDraft((loss.supportOperators || []).map(operator => ({ ...operator })));
       setLossModalOpen(true);
     };
 
@@ -739,14 +749,16 @@ export default function OEEApplication() {
     };
 
     const saveSupportOperators = () => {
-      setActiveSession(current => ({ ...current, supportOperators: supportDraft, supportOperatorsConfirmed: true }));
+      setActiveSession(current => ({ ...current, supportOperators: supportDraft }));
       setSupportModalOpen(false);
     };
 
-    const cancelSupportSetup = () => {
-      setSupportModalOpen(false);
-      setActiveSession(null);
-      setCurrentView('work_orders');
+    const togglePlannedSupportOperator = (operator) => {
+      setPlannedSupportDraft(current => current.some(item => item.id === operator.id) ? current.filter(item => item.id !== operator.id) : [...current, { ...operator, hours: '' }]);
+    };
+
+    const updatePlannedSupportHours = (operatorId, hours) => {
+      setPlannedSupportDraft(current => current.map(item => item.id === operatorId ? { ...item, hours } : item));
     };
 
     const handleCreateMaintenanceTicket = () => {
@@ -779,6 +791,7 @@ export default function OEEApplication() {
         speedEndTime: lossType === 'performance' ? lossForm.speedEndTime : null,
         ticketCode: requiresMaintenanceTicket ? maintenanceTicket?.code : null,
         ticket: requiresMaintenanceTicket ? maintenanceTicket : null,
+        supportOperators: lossType === 'planned_availability' ? plannedSupportDraft : [],
         time: new Date().toLocaleTimeString()
       };
       
@@ -915,7 +928,7 @@ export default function OEEApplication() {
         </div>
 
         {/* Control Panel Buttons */}
-        <h3 className="text-lg font-bold text-slate-800 mt-8 mb-4">Panel de Registro</h3>
+        <div className="mt-8 mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-800">Panel de Registro</h3><Button variant="secondary" className="!py-2" onClick={openSupportModal}><Users size={18}/> Personal de apoyo ({activeSession.supportOperators.length})</Button></div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           <button 
             onClick={() => setQtyModalOpen(true)}
@@ -991,6 +1004,7 @@ export default function OEEApplication() {
                       <div>
                         <p className="font-medium text-slate-800">{loss.cause}</p>
                         <p className="text-xs text-slate-500">{loss.time} {loss.comment && `- ${loss.comment}`}</p>
+                        {loss.category === 'planned_availability' && loss.supportOperators?.length > 0 && <p className="mt-1 text-xs font-medium text-sky-700">Apoyo: {loss.supportOperators.map(operator => `${operator.name} (${operator.hours} h)`).join(', ')}</p>}
                         {loss.ticketCode && (
                           <p className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                             <Wrench size={12} /> Ticket: {loss.ticketCode}
@@ -1021,9 +1035,9 @@ export default function OEEApplication() {
         </div>
 
         {/* Modals */}
-        <Modal isOpen={supportModalOpen} onClose={cancelSupportSetup} title="Paso 1 de 2: operarios de apoyo">
+        <Modal isOpen={supportModalOpen} onClose={() => setSupportModalOpen(false)} title="Personal de apoyo">
           <div className="space-y-5">
-            <p className="text-sm text-slate-600">Antes de abrir el panel OEE, registra todos los operarios de apoyo e indica cuántas horas participaron. Si no hubo apoyos, confirma la lista vacía para continuar.</p>
+            <p className="text-sm text-slate-600">Registra o actualiza en cualquier momento a los operarios que apoyaron durante el proceso OEE.</p>
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
               <label className="block text-sm font-semibold text-blue-900">Asignar las mismas horas a todos</label>
               <div className="mt-2 flex gap-2">
@@ -1044,7 +1058,7 @@ export default function OEEApplication() {
               })}
             </div>
             <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-3"><label className="mb-2 block text-sm font-semibold text-blue-900">Añadir operario no registrado</label><div className="flex gap-2"><input className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" placeholder="Nombre completo" value={newSupportName} onChange={(event) => setNewSupportName(event.target.value)}/><Button variant="secondary" className="!px-3 !py-2" disabled={!newSupportName.trim()} onClick={addSupportOperator}><Plus size={16}/> Añadir</Button></div></div>
-            <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={cancelSupportSetup}>Cancelar registro OEE</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Confirmar y continuar ({supportDraft.length})</Button></div>
+            <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={() => setSupportModalOpen(false)}>Cancelar</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Guardar personal ({supportDraft.length})</Button></div>
           </div>
         </Modal>
 
@@ -1101,6 +1115,14 @@ export default function OEEApplication() {
               </div>
             )}
 
+            {lossType === 'planned_availability' && (
+              <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
+                <p className="font-semibold text-sky-900">Operarios que apoyaron en la detención</p>
+                <p className="mb-3 text-xs text-sky-700">Selecciona el personal que participó en el set up, limpieza u otra actividad planificada.</p>
+                <div className="max-h-52 space-y-2 overflow-y-auto">{supportCandidates.map(operator => { const selected = plannedSupportDraft.find(item => item.id === operator.id); return <div key={operator.id} className="flex items-center gap-2 rounded border border-sky-100 bg-white p-2"><input type="checkbox" checked={Boolean(selected)} onChange={() => togglePlannedSupportOperator(operator)} aria-label={`Seleccionar ${operator.name}`}/><span className="min-w-0 flex-1 text-sm font-medium">{operator.name}</span><input type="number" min="0" step="0.25" disabled={!selected} value={selected?.hours || ''} onChange={(event) => updatePlannedSupportHours(operator.id, event.target.value)} placeholder="Horas" className="w-24 rounded border border-slate-300 p-2 text-sm disabled:bg-slate-100"/></div>; })}</div>
+              </div>
+            )}
+
             {lossType === 'quality' && (
               <div>
                 <div className="grid grid-cols-2 gap-3"><div><label className="block text-sm font-medium text-amber-800 mb-1">Reproceso (und)</label><input type="number" min="0" className="w-full rounded-lg border border-amber-300 p-3 text-lg" value={lossForm.reprocessQty} onChange={(e) => setLossForm({...lossForm, reprocessQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Puede volver a fabricarse.</p></div><div><label className="block text-sm font-medium text-rose-800 mb-1">Desperdicio (und)</label><input type="number" min="0" className="w-full rounded-lg border border-rose-300 p-3 text-lg" value={lossForm.wasteQty} onChange={(e) => setLossForm({...lossForm, wasteQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Descarte definitivo.</p></div></div>
@@ -1138,7 +1160,7 @@ export default function OEEApplication() {
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || ((lossType === 'availability' || lossType === 'planned_availability') && !lossForm.duration) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={!lossForm.cause || ((lossType === 'availability' || lossType === 'planned_availability') && !lossForm.duration) || (lossType === 'planned_availability' && plannedSupportDraft.some(operator => !Number(operator.hours))) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               {editingLossId ? 'Guardar cambios' : 'Registrar evento'}
@@ -1229,13 +1251,13 @@ export default function OEEApplication() {
 
     const observeRecord = () => {
       if (!observationComment.trim()) return;
-      const meeting = { code: `REU-${Date.now().toString().slice(-6)}`, attendee: 'Juanito', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString() };
+      const meeting = { code: `REU-${Date.now().toString().slice(-6)}`, attendee: selectedRecord.operator, date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString() };
       setRecords(current => current.map(record => record.id === selectedRecord.id ? { ...record, status: 'observed', observationComment, correctionMeeting: meeting } : record));
       setWorkOrders(current => current.map(order => order.id === (selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')) ? { ...order, status: 'observed' } : order));
       setObservationComment('');
       setObservationModalOpen(false);
       setSelectedRecord(null);
-      alert(`OT observada. Se asignó la reunión ${meeting.code} con Juanito para el ${meeting.date}.`);
+      alert(`OT observada. Se asignó la reunión ${meeting.code} con ${meeting.attendee} para el ${meeting.date}.`);
     };
 
     const approveRecord = () => {
@@ -1257,7 +1279,7 @@ export default function OEEApplication() {
         {selectedRecord ? (
           <Card>
             <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Detalle de OT: {selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant={selectedRecord.status === 'validated' ? 'success' : 'warning'}>{WORK_ORDER_STATUS[selectedRecord.status]?.label || selectedRecord.status}</Badge></div>
-            <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div><p className="text-sm text-slate-500">Operario responsable</p><p className="font-semibold">{selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>{selectedRecord.metrics.oee.toFixed(1)}%</p></div></div>
+            <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-4 gap-6"><div><p className="text-sm text-slate-500">Registrador</p><p className="font-semibold">{selectedRecord.registrar || selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(selectedRecord.metrics.oee)}}>{selectedRecord.metrics.oee.toFixed(1)}%</p></div></div>
             <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex justify-between"><span>{loss.cause}</span><span className="font-semibold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>)}</div>}</div>
             {selectedRecord.status === 'review' && <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div>}</div>
           </Card>
