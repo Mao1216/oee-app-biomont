@@ -58,7 +58,7 @@ const INITIAL_SUPPORT_OPERATORS = [
 const PRODUCTION_LINE_OPERATORS = [
   { id: "OP-B01-001", name: "Omar Miraya", machines: ["Blistera B-01", "B-01"] },
   { id: "OP-B01-002", name: "Aaron Flores", machines: ["Blistera B-01", "B-01"] },
-  { id: "OP-B01-003", name: "Josue Huapaya", machines: ["Blistera B-01", "B-01"] }
+  { id: "OP-B01-003", name: "Josue Huapaya", machines: ["*"] }
 ];
 const DEMO_CREDENTIALS = {
   supervisor: { username: "molin", password: "password", name: "Molin" },
@@ -269,10 +269,10 @@ export default function OEEApplication() {
 
   const downloadWorkOrderTemplate = () => {
     const worksheet = XLSX.utils.json_to_sheet([{
-      'Código OT': '', Lote: '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
-      'Velocidad estándar (und/min)': '', 'Horas planificadas del operario': '', Fecha: ''
+      Lote: '', 'Código OT': '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
+      'Velocidad estándar (und/min)': ''
     }]);
-    worksheet['!cols'] = [{ wch: 18 }, { wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }, { wch: 32 }, { wch: 14 }];
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Ordenes OT');
     XLSX.writeFile(workbook, 'Plantilla_Ordenes_OT_Biomont.xlsx');
@@ -281,13 +281,14 @@ export default function OEEApplication() {
   // Helper to calculate active session OEE
   const calculateSessionMetrics = (session) => {
     if (!session) return { a: 0, p: 0, q: 0, oee: 0 };
+    const losses = Array.isArray(session.losses) ? session.losses : [];
     
     const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
     const plannedTimeMin = processMinutes;
     
     // Calculate total lost time by type
     let availLoss = 0, perfLoss = 0;
-    session.losses.forEach(l => {
+    losses.forEach(l => {
       if (l.category === 'availability' || l.category === 'planned_availability') availLoss += parseInt(l.duration);
       if (l.category === 'performance') perfLoss += parseInt(l.duration);
     });
@@ -297,7 +298,7 @@ export default function OEEApplication() {
 
     // La velocidad real se obtiene de la producción y del horario ingresado por el operario.
     const standardSpeed = Number(session.standardSpeed) || 0;
-    const speedSegments = session.losses.filter(loss => loss.category === 'performance' && loss.duration > 0 && loss.speed > 0);
+    const speedSegments = losses.filter(loss => loss.category === 'performance' && loss.duration > 0 && loss.speed > 0);
     const speedMinutes = speedSegments.reduce((total, segment) => total + Number(segment.duration), 0);
     const weightedSpeed = speedMinutes > 0
       ? speedSegments.reduce((total, segment) => total + Number(segment.speed) * Number(segment.duration), 0) / speedMinutes
@@ -545,7 +546,7 @@ export default function OEEApplication() {
     const normalized = (value) => String(value || '').toLowerCase();
     const visibleWorkOrders = workOrders.filter((order) => {
       if (!activeStatuses.includes(order.status)) return false;
-      const operatorHasAccess = role === 'supervisor' || PRODUCTION_LINE_OPERATORS.some(operator => operator.id === currentUser?.id && operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine))));
+      const operatorHasAccess = role === 'supervisor' || PRODUCTION_LINE_OPERATORS.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
       if (!operatorHasAccess) return false;
       return normalized(order.id).includes(normalized(workOrderFilters.code))
         && normalized(order.lot).includes(normalized(workOrderFilters.lot))
@@ -583,12 +584,12 @@ export default function OEEApplication() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
-                  <th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
+                  <th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
                 </tr>
                 {role === 'supervisor' && (
                   <tr className="border-b border-slate-200 bg-white">
-                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar lote" value={workOrderFilters.lot} onChange={(e) => updateFilter('lot', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
@@ -601,7 +602,7 @@ export default function OEEApplication() {
               <tbody>
                 {visibleWorkOrders.map((ot) => (
                   <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                    <td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 font-semibold text-blue-700">{ot.lot}</td><td className="p-4 text-slate-600">{ot.product}</td>
+                    <td className="p-4 font-semibold text-blue-700">{ot.lot}</td><td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 text-slate-600">{ot.product}</td>
                     <td className="p-4"><div className="text-sm text-slate-800">{ot.line}</div><div className="text-xs text-slate-500">{ot.machine}</div></td>
                     <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
                     <td className="p-4 font-semibold text-purple-700">{Number(ot.standardSpeed || 0).toLocaleString()} und/min</td>
@@ -1433,7 +1434,7 @@ export default function OEEApplication() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50">
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
-            {currentView === 'work_orders' && <WorkOrdersView />}
+            {currentView === 'work_orders' && WorkOrdersView()}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
             {currentView === 'ai' && <AIAssistantView />}
