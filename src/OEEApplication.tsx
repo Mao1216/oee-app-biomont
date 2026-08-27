@@ -88,6 +88,15 @@ const LOSS_CAUSES = {
 const CHART_DATA_TREND = [];
 const CHART_DATA_PARETO = [];
 
+const loadStoredCatalog = (key, fallback) => {
+  try {
+    const stored = window.localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
 type BadgeVariant = 'default' | 'success' | 'warning' | 'critical' | 'primary';
 
@@ -182,6 +191,11 @@ export default function OEEApplication() {
   // App Data State
   const [records, setRecords] = useState([]);
   const [workOrders, setWorkOrders] = useState([]);
+  const [productionLineOperators, setProductionLineOperators] = useState(() => loadStoredCatalog('bioee-production-line-operators', PRODUCTION_LINE_OPERATORS));
+  const [lossCauses, setLossCauses] = useState(() => loadStoredCatalog('bioee-loss-causes', LOSS_CAUSES));
+  const [adminLossCategory, setAdminLossCategory] = useState('availability');
+  const [adminNewCause, setAdminNewCause] = useState('');
+  const [adminOperatorForm, setAdminOperatorForm] = useState({ name: '', machines: '' });
   const [importMessage, setImportMessage] = useState('');
   const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', lot: '', product: '', line: '', quantity: '', status: '', registrar: '' });
   const workOrdersFileInputRef = useRef(null);
@@ -192,8 +206,11 @@ export default function OEEApplication() {
   const [activeSession, setActiveSession] = useState(null);
 
   const currentUser = role === 'responsible_operator'
-    ? (PRODUCTION_LINE_OPERATORS.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
+    ? (productionLineOperators.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
     : role ? DEMO_CREDENTIALS[role] : null;
+
+  useEffect(() => { window.localStorage.setItem('bioee-production-line-operators', JSON.stringify(productionLineOperators)); }, [productionLineOperators]);
+  useEffect(() => { window.localStorage.setItem('bioee-loss-causes', JSON.stringify(lossCauses)); }, [lossCauses]);
 
   const handleLogin = (event) => {
     event.preventDefault();
@@ -346,7 +363,7 @@ export default function OEEApplication() {
                 <option value="responsible_operator">Operario responsable</option>
               </select>
             </div>
-            {loginRole === 'responsible_operator' && <div><label className="block text-sm font-semibold text-slate-700 mb-2">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{PRODUCTION_LINE_OPERATORS.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
+            {loginRole === 'responsible_operator' && <div><label className="block text-sm font-semibold text-slate-700 mb-2">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{productionLineOperators.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
             <Button className="w-full !py-3" type="submit" disabled={!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)}><User size={18} /> Ingresar</Button>
           </form>
         </div>
@@ -546,7 +563,7 @@ export default function OEEApplication() {
     const normalized = (value) => String(value || '').toLowerCase();
     const visibleWorkOrders = workOrders.filter((order) => {
       if (!activeStatuses.includes(order.status)) return false;
-      const operatorHasAccess = role === 'supervisor' || PRODUCTION_LINE_OPERATORS.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
+      const operatorHasAccess = role === 'supervisor' || productionLineOperators.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
       if (!operatorHasAccess) return false;
       return normalized(order.id).includes(normalized(workOrderFilters.code))
         && normalized(order.lot).includes(normalized(workOrderFilters.lot))
@@ -595,7 +612,7 @@ export default function OEEApplication() {
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
                     <th className="p-2"></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
-                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.registrar} onChange={(e) => updateFilter('registrar', e.target.value)}><option value="">Todos</option><option value="Sin registrador">Sin registrador</option>{PRODUCTION_LINE_OPERATORS.map(operator => <option key={operator.id} value={operator.name}>{operator.name}</option>)}</select></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.registrar} onChange={(e) => updateFilter('registrar', e.target.value)}><option value="">Todos</option><option value="Sin registrador">Sin registrador</option>{productionLineOperators.map(operator => <option key={operator.id} value={operator.name}>{operator.name}</option>)}</select></th>
                   </tr>
                 )}
               </thead>
@@ -612,7 +629,7 @@ export default function OEEApplication() {
                         <div className="flex min-w-48 items-center gap-2"><span className="flex-1 text-sm font-medium text-slate-700">{ot.registrar || 'Sin registrador'}</span>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
                       ) : (
                         <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'in_progress' && ot.registrar !== currentUser.name} onClick={() => {
-                           setActiveSession({...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
+                           setActiveSession({...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, productionRegistered: false, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
                           setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress', registrar: currentUser.name } : order));
                           setCurrentView('active_production');
                         }}>{ot.status === 'in_progress' ? 'Continuar OEE' : 'Registrar OEE'} <ArrowRight size={16} /></Button>
@@ -642,10 +659,11 @@ export default function OEEApplication() {
     const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     const [supportModalOpen, setSupportModalOpen] = useState(false);
     const [sharedSupportHours, setSharedSupportHours] = useState('');
-    const [supportOperators, setSupportOperators] = useState([...PRODUCTION_LINE_OPERATORS, ...INITIAL_SUPPORT_OPERATORS]);
+    const [supportOperators, setSupportOperators] = useState(INITIAL_SUPPORT_OPERATORS);
     const [supportDraft, setSupportDraft] = useState([]);
     const [plannedSupportDraft, setPlannedSupportDraft] = useState([]);
     const [newSupportName, setNewSupportName] = useState('');
+    const [supportSearch, setSupportSearch] = useState('');
     const [overweightModalOpen, setOverweightModalOpen] = useState(false);
     const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
     const [targetWeight, setTargetWeight] = useState('');
@@ -655,7 +673,8 @@ export default function OEEApplication() {
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
     const metrics = calculateSessionMetrics(activeSession);
-    const supportCandidates = [...PRODUCTION_LINE_OPERATORS, ...supportOperators].filter((operator, index, list) => list.findIndex(item => item.id === operator.id) === index);
+    const supportCandidates = [...productionLineOperators, ...supportOperators].filter((operator, index, list) => list.findIndex(item => item.id === operator.id) === index);
+    const filteredSupportOperators = supportCandidates.filter(operator => `${operator.name} ${operator.id}`.toLowerCase().includes(supportSearch.trim().toLowerCase()));
     const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
     const performanceLosses = activeSession.losses.filter(loss => loss.category === 'performance');
     const editingPerformanceIndex = performanceLosses.findIndex(loss => loss.id === editingLossId);
@@ -807,10 +826,12 @@ export default function OEEApplication() {
 
     const handleUpdateQty = () => {
       const produced = parseInt(qtyForm.produced) || 0;
+      if (activeSession.productionRegistered || produced <= 0) return;
       setActiveSession({
         ...activeSession,
-        realQty: activeSession.realQty + produced,
-        goodQty: activeSession.goodQty + produced
+        realQty: produced,
+        goodQty: Math.max(0, produced - Number(activeSession.rejectQty || 0)),
+        productionRegistered: true
       });
       setQtyModalOpen(false);
       setQtyForm({ produced: '' });
@@ -931,15 +952,16 @@ export default function OEEApplication() {
         {/* Control Panel Buttons */}
         <div className="mt-8 mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-800">Panel de Registro</h3><Button variant="secondary" className="!py-2" onClick={openSupportModal}><Users size={18}/> Personal de apoyo ({activeSession.supportOperators.length})</Button></div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <button 
+          <button
             onClick={() => setQtyModalOpen(true)}
-            className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:shadow-md transition-all group"
+            disabled={activeSession.productionRegistered}
+            className="flex flex-col items-center justify-center p-6 bg-white border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:shadow-md transition-all group disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-60"
           >
             <div className="bg-blue-100 p-4 rounded-full text-blue-600 mb-3 group-hover:scale-110 transition-transform">
               <Plus size={32} />
             </div>
-            <span className="font-bold text-slate-800 text-lg">Registrar Producción</span>
-            <span className="text-sm text-slate-500">Actualizar contador</span>
+            <span className="font-bold text-slate-800 text-lg">{activeSession.productionRegistered ? 'Producción registrada' : 'Registrar Producción'}</span>
+            <span className="text-sm text-slate-500">{activeSession.productionRegistered ? `${activeSession.realQty.toLocaleString()} unidades` : 'Registro único'}</span>
           </button>
           <button
              onClick={() => openNewLoss('quality')}
@@ -978,9 +1000,15 @@ export default function OEEApplication() {
             <span className="font-bold text-slate-800 text-lg">Pérdida de velocidad</span>
             <span className="text-sm text-slate-500">Rendimiento</span>
           </button>
-          <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-3 rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><span className="text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Muestreos y pesos medidos</span></button>
-          <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></button>
         </div>
+
+        <Card className="mt-8 p-5">
+          <div className="mb-4"><h3 className="text-lg font-bold text-slate-800">Indicadores adicionales</h3><p className="text-sm text-slate-500">Registros complementarios que no forman parte de la secuencia principal.</p></div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-5 text-left transition-all hover:border-cyan-500 hover:shadow-md"><div className="rounded-full bg-cyan-100 p-3 text-cyan-700"><Scale size={28}/></div><div><span className="block text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Muestreos y pesos medidos</span></div></button>
+            <button onClick={() => setMaterialModalOpen(true)} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-5 text-left transition-all hover:border-orange-500 hover:shadow-md"><div className="rounded-full bg-orange-100 p-3 text-orange-700"><PackageMinus size={28}/></div><div><span className="block text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></div></button>
+          </div>
+        </Card>
 
         {/* Recent Events Log */}
         <Card className="mt-8">
@@ -1039,6 +1067,7 @@ export default function OEEApplication() {
         <Modal isOpen={supportModalOpen} onClose={() => setSupportModalOpen(false)} title="Personal de apoyo">
           <div className="space-y-5">
             <p className="text-sm text-slate-600">Registra o actualiza en cualquier momento a los operarios que apoyaron durante el proceso OEE.</p>
+            <div className="relative"><Search className="absolute left-3 top-3 text-slate-400" size={18}/><input value={supportSearch} onChange={(event) => setSupportSearch(event.target.value)} className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-3" placeholder="Buscar por nombre o código..."/></div>
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
               <label className="block text-sm font-semibold text-blue-900">Asignar las mismas horas a todos</label>
               <div className="mt-2 flex gap-2">
@@ -1047,7 +1076,7 @@ export default function OEEApplication() {
               </div>
             </div>
             <div className="space-y-2">
-              {supportOperators.map(operator => {
+              {filteredSupportOperators.map(operator => {
                 const selected = supportDraft.find(item => item.id === operator.id);
                 return (
                   <div key={operator.id} className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
@@ -1057,6 +1086,7 @@ export default function OEEApplication() {
                   </div>
                 );
               })}
+              {filteredSupportOperators.length === 0 && <p className="rounded-lg bg-slate-50 p-4 text-center text-sm text-slate-500">No se encontraron operarios.</p>}
             </div>
             <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-3"><label className="mb-2 block text-sm font-semibold text-blue-900">Añadir operario no registrado</label><div className="flex gap-2"><input className="min-w-0 flex-1 rounded-lg border border-blue-200 p-2" placeholder="Nombre completo" value={newSupportName} onChange={(event) => setNewSupportName(event.target.value)}/><Button variant="secondary" className="!px-3 !py-2" disabled={!newSupportName.trim()} onClick={addSupportOperator}><Plus size={16}/> Añadir</Button></div></div>
             <div className="flex gap-3"><Button variant="secondary" className="flex-1" onClick={() => setSupportModalOpen(false)}>Cancelar</Button><Button className="flex-1" disabled={supportDraft.some(item => !Number(item.hours))} onClick={saveSupportOperators}>Guardar personal ({supportDraft.length})</Button></div>
@@ -1075,7 +1105,7 @@ export default function OEEApplication() {
                 }}
               >
                 <option value="">Seleccione una causa...</option>
-                {LOSS_CAUSES[lossType].map(c => <option key={c} value={c}>{c}</option>)}
+                {lossCauses[lossType].map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             
@@ -1294,6 +1324,52 @@ export default function OEEApplication() {
     );
   };
 
+  const AdministrationView = () => {
+    const categoryLabels = { planned_availability: 'Detenciones planificadas', availability: 'Detenciones no planificadas', performance: 'Pérdidas de velocidad', quality: 'Rechazos de calidad' };
+    const addCause = () => {
+      const cause = adminNewCause.trim();
+      if (!cause || lossCauses[adminLossCategory].some(item => item.toLowerCase() === cause.toLowerCase())) return;
+      setLossCauses(current => ({ ...current, [adminLossCategory]: [...current[adminLossCategory], cause] }));
+      setAdminNewCause('');
+    };
+    const renameCause = (category, cause) => {
+      const next = window.prompt('Nuevo nombre del motivo:', cause)?.trim();
+      if (!next || next === cause) return;
+      setLossCauses(current => ({ ...current, [category]: current[category].map(item => item === cause ? next : item) }));
+    };
+    const removeCause = (category, cause) => {
+      if (!window.confirm(`¿Quitar el motivo "${cause}" del listado?`)) return;
+      setLossCauses(current => ({ ...current, [category]: current[category].filter(item => item !== cause) }));
+    };
+    const addOperator = () => {
+      const name = adminOperatorForm.name.trim();
+      const machines = adminOperatorForm.machines.split(',').map(item => item.trim()).filter(Boolean);
+      if (!name || !machines.length) return;
+      setProductionLineOperators(current => [...current, { id: `OP-${Date.now().toString().slice(-6)}`, name, machines }]);
+      setAdminOperatorForm({ name: '', machines: '' });
+    };
+    const editOperator = (operator) => {
+      const name = window.prompt('Nombre del operario:', operator.name)?.trim();
+      if (!name) return;
+      const machinesText = window.prompt('Máquinas o líneas separadas por coma. Use * para todas:', operator.machines.join(', '));
+      if (machinesText === null) return;
+      const machines = machinesText.split(',').map(item => item.trim()).filter(Boolean);
+      if (!machines.length) return;
+      setProductionLineOperators(current => current.map(item => item.id === operator.id ? { ...item, name, machines } : item));
+    };
+    const removeOperator = (operator) => {
+      if (!window.confirm(`¿Quitar a ${operator.name} del listado de operarios?`)) return;
+      setProductionLineOperators(current => current.filter(item => item.id !== operator.id));
+    };
+    return <div className="space-y-6 animate-in fade-in duration-300">
+      <div><h2 className="text-2xl font-bold text-slate-800">Administración</h2><p className="text-slate-500">Mantén actualizados los motivos operativos y el personal de las líneas de producción.</p></div>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Base de motivos</h3><label className="mb-1 block text-sm font-semibold text-slate-600">Tipo de registro</label><select value={adminLossCategory} onChange={(event) => setAdminLossCategory(event.target.value)} className="mb-4 w-full rounded-lg border border-slate-300 p-3">{Object.entries(categoryLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select><div className="mb-4 flex gap-2"><input value={adminNewCause} onChange={(event) => setAdminNewCause(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addCause()} className="min-w-0 flex-1 rounded-lg border border-slate-300 p-3" placeholder="Nuevo motivo..."/><Button className="!px-4" disabled={!adminNewCause.trim()} onClick={addCause}><Plus size={17}/> Añadir</Button></div><div className="space-y-2">{lossCauses[adminLossCategory].map(cause => <div key={cause} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><span className="flex-1 text-sm font-medium">{cause}</span><button onClick={() => renameCause(adminLossCategory,cause)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeCause(adminLossCategory,cause)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>
+        <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Personal por línea</h3><div className="mb-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><input value={adminOperatorForm.name} onChange={(event) => setAdminOperatorForm(current => ({...current,name:event.target.value}))} className="rounded-lg border border-slate-300 p-3" placeholder="Nombre del operario"/><input value={adminOperatorForm.machines} onChange={(event) => setAdminOperatorForm(current => ({...current,machines:event.target.value}))} className="rounded-lg border border-slate-300 p-3" placeholder="B-01, E-01 o *"/><Button className="!px-4" disabled={!adminOperatorForm.name.trim() || !adminOperatorForm.machines.trim()} onClick={addOperator}><Plus size={17}/> Añadir</Button></div><p className="mb-4 text-xs text-slate-500">Separa varias máquinas o líneas con comas. Usa * para permitir acceso a todas.</p><div className="space-y-2">{productionLineOperators.map(operator => <div key={operator.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{operator.name}</p><p className="text-xs text-slate-500">{operator.machines.includes('*') ? 'Todas las líneas' : operator.machines.join(', ')}</p></div><button onClick={() => editOperator(operator)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeOperator(operator)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>
+      </div>
+    </div>;
+  };
+
   const AIAssistantView = () => {
     const [messages, setMessages] = useState([
       { role: 'ai', text: 'Hola Carlos. Soy tu asistente experto en OEE. He analizado los datos del último mes de la Planta Norte. ¿En qué te puedo ayudar a profundizar hoy?' }
@@ -1388,6 +1464,7 @@ export default function OEEApplication() {
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
+          {role === 'supervisor' && <SidebarItem icon={Settings} label="Administración" viewId="administration" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
         </div>
 
@@ -1437,6 +1514,7 @@ export default function OEEApplication() {
             {currentView === 'work_orders' && WorkOrdersView()}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
+            {currentView === 'administration' && AdministrationView()}
             {currentView === 'ai' && <AIAssistantView />}
           </div>
         </div>
