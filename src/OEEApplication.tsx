@@ -201,6 +201,12 @@ export default function OEEApplication() {
   const workOrdersFileInputRef = useRef(null);
   const [selectedLiveOrder, setSelectedLiveOrder] = useState(null);
   const [dashboardProduct, setDashboardProduct] = useState('');
+  const [additionalOrderId, setAdditionalOrderId] = useState('');
+  const [additionalOverweightOpen, setAdditionalOverweightOpen] = useState(false);
+  const [additionalOverweightDraft, setAdditionalOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
+  const [additionalTargetWeight, setAdditionalTargetWeight] = useState('');
+  const [additionalMaterialOpen, setAdditionalMaterialOpen] = useState(false);
+  const [additionalMaterialForm, setAdditionalMaterialForm] = useState({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
   
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(null);
@@ -646,6 +652,53 @@ export default function OEEApplication() {
       </div>
     );
   };
+
+  const AdditionalIndicatorsView = () => {
+    const normalized = (value) => String(value || '').toLowerCase();
+    const availableOrders = workOrders.filter(order => {
+      if (!['not_started', 'in_progress'].includes(order.status)) return false;
+      return productionLineOperators.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
+    });
+    const selectedOrder = availableOrders.find(order => order.id === additionalOrderId);
+    const validSamples = additionalOverweightDraft.length > 0 && additionalOverweightDraft.every(sample => Number(sample.sampleSize) > 0 && sample.weights.length === Number(sample.sampleSize) && sample.weights.every(weight => Number(weight) > 0));
+    const updateSampleSize = (sampleIndex, value) => {
+      const sampleSize = Math.max(0, Math.min(100, parseInt(value) || 0));
+      setAdditionalOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? { ...sample, sampleSize: value, weights: Array.from({ length: sampleSize }, (_, weightIndex) => sample.weights[weightIndex] || '') } : sample));
+    };
+    const updateWeight = (sampleIndex, weightIndex, value) => setAdditionalOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? { ...sample, weights: sample.weights.map((weight, index) => index === weightIndex ? value : weight) } : sample));
+    const openOverweight = () => {
+      if (!selectedOrder) return;
+      setAdditionalTargetWeight(String(selectedOrder.targetWeight || ''));
+      setAdditionalOverweightDraft([{ sampleSize: '', weights: [''] }]);
+      setAdditionalOverweightOpen(true);
+    };
+    const saveOverweight = () => {
+      if (!selectedOrder || !validSamples) return;
+      const timestamp = Date.now();
+      const rows = additionalOverweightDraft.flatMap((sample, sampleIndex) => sample.weights.map((weight, weightIndex) => ({ id: timestamp + Math.random(), sampleId: `M-${timestamp}-${sampleIndex + 1}`, sampleSize: Number(sample.sampleSize), measurement: weightIndex + 1, weight: Number(weight), quantity: 1 })));
+      const update = order => order.id === selectedOrder.id ? { ...order, targetWeight: Number(additionalTargetWeight) || order.targetWeight, overweights: [...(order.overweights || []), ...rows] } : order;
+      setWorkOrders(current => current.map(update));
+      setActiveSession(current => current?.id === selectedOrder.id ? update(current) : current);
+      setAdditionalOverweightOpen(false);
+    };
+    const saveMaterial = () => {
+      if (!selectedOrder || !additionalMaterialForm.material.trim() || Number(additionalMaterialForm.quantity) <= 0) return;
+      const row = { ...additionalMaterialForm, id: Date.now(), quantity: Number(additionalMaterialForm.quantity) };
+      const update = order => order.id === selectedOrder.id ? { ...order, materialDiscards: [...(order.materialDiscards || []), row] } : order;
+      setWorkOrders(current => current.map(update));
+      setActiveSession(current => current?.id === selectedOrder.id ? update(current) : current);
+      setAdditionalMaterialForm({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+      setAdditionalMaterialOpen(false);
+    };
+    return <div className="space-y-6 animate-in fade-in duration-300">
+      <div><h2 className="text-2xl font-bold text-slate-800">Indicadores adicionales</h2><p className="text-slate-500">Selecciona una orden de trabajo para registrar sobrepeso o descarte de material.</p></div>
+      <Card className="p-6"><label className="mb-2 block text-sm font-semibold text-slate-700">Orden de trabajo</label><select value={additionalOrderId} onChange={(event) => setAdditionalOrderId(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white p-3"><option value="">Selecciona una OT...</option>{availableOrders.map(order => <option key={order.id} value={order.id}>Lote {order.lot} · OT {order.id} · {order.product} · {order.machine}</option>)}</select>{availableOrders.length === 0 && <p className="mt-3 text-sm text-slate-500">No hay OT disponibles para tus líneas de producción.</p>}</Card>
+      {selectedOrder ? <><Card className="p-5"><div className="grid gap-3 text-sm sm:grid-cols-4"><div><p className="text-slate-500">Lote</p><p className="font-bold">{selectedOrder.lot}</p></div><div><p className="text-slate-500">Código OT</p><p className="font-bold">{selectedOrder.id}</p></div><div><p className="text-slate-500">Producto</p><p className="font-bold">{selectedOrder.product}</p></div><div><p className="text-slate-500">Máquina</p><p className="font-bold">{selectedOrder.machine}</p></div></div></Card><div className="grid grid-cols-1 gap-4 md:grid-cols-2"><button onClick={openOverweight} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-6 text-left transition-all hover:border-cyan-500 hover:shadow-md"><div className="rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><div><span className="block text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">{(selectedOrder.overweights || []).length} peso(s) registrados</span></div></button><button onClick={() => setAdditionalMaterialOpen(true)} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-6 text-left transition-all hover:border-orange-500 hover:shadow-md"><div className="rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><div><span className="block text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">{(selectedOrder.materialDiscards || []).length} descarte(s) registrados</span></div></button></div></> : <Card className="p-10 text-center text-slate-500"><ClipboardList className="mx-auto mb-3 text-slate-300" size={42}/><p>Selecciona una OT para habilitar los registros.</p></Card>}
+      <Modal isOpen={additionalOverweightOpen} onClose={() => setAdditionalOverweightOpen(false)} title={`Registrar sobrepeso · OT ${selectedOrder?.id || ''}`}><div className="space-y-4"><div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={additionalTargetWeight} onChange={(event) => setAdditionalTargetWeight(event.target.value)}/></div>{additionalOverweightDraft.map((sample,sampleIndex) => <div key={sampleIndex} className="space-y-3 rounded-lg border border-slate-200 p-4"><div className="flex items-end gap-2"><div className="flex-1"><label className="text-sm font-semibold">Cantidad muestreada</label><input type="number" min="1" max="100" className="mt-1 w-full rounded border border-slate-300 p-2" value={sample.sampleSize} onChange={(event) => updateSampleSize(sampleIndex,event.target.value)}/></div><button disabled={additionalOverweightDraft.length === 1} onClick={() => setAdditionalOverweightDraft(current => current.filter((_,index) => index !== sampleIndex))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>{Number(sample.sampleSize) > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{sample.weights.map((weight,weightIndex) => <div key={weightIndex}><label className="text-xs font-semibold text-slate-500">Peso {weightIndex+1} (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={weight} onChange={(event) => updateWeight(sampleIndex,weightIndex,event.target.value)}/></div>)}</div>}</div>)}<Button variant="secondary" className="w-full" onClick={() => setAdditionalOverweightDraft(current => [...current,{sampleSize:'',weights:['']}])}><Plus size={18}/> Agregar otro muestreo</Button><Button className="w-full" disabled={!validSamples} onClick={saveOverweight}>Guardar en OT {selectedOrder?.id}</Button></div></Modal>
+      <Modal isOpen={additionalMaterialOpen} onClose={() => setAdditionalMaterialOpen(false)} title={`Descarte de material · OT ${selectedOrder?.id || ''}`}><div className="space-y-4"><div><label className="mb-1 block text-sm font-semibold">Tipo de material</label><select className="w-full rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.type} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option></select></div><div><label className="mb-1 block text-sm font-semibold">Material descartado</label><input className="w-full rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.material} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,material:event.target.value})}/></div><div className="grid grid-cols-2 gap-3"><input type="number" min="0" className="rounded-lg border border-slate-300 p-3" placeholder="Cantidad" value={additionalMaterialForm.quantity} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,quantity:event.target.value})}/><select className="rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.unit} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,unit:event.target.value})}><option>unidades</option><option>kg</option><option>metros</option></select></div><textarea className="w-full rounded-lg border border-slate-300 p-3" placeholder="Comentario opcional" value={additionalMaterialForm.comment} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,comment:event.target.value})}/><Button className="w-full" disabled={!additionalMaterialForm.material.trim() || Number(additionalMaterialForm.quantity) <= 0} onClick={saveMaterial}>Guardar en OT {selectedOrder?.id}</Button></div></Modal>
+    </div>;
+  };
+
   const ActiveProductionView = () => {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
@@ -1001,14 +1054,6 @@ export default function OEEApplication() {
             <span className="text-sm text-slate-500">Rendimiento</span>
           </button>
         </div>
-
-        <Card className="mt-8 p-5">
-          <div className="mb-4"><h3 className="text-lg font-bold text-slate-800">Indicadores adicionales</h3><p className="text-sm text-slate-500">Registros complementarios que no forman parte de la secuencia principal.</p></div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-5 text-left transition-all hover:border-cyan-500 hover:shadow-md"><div className="rounded-full bg-cyan-100 p-3 text-cyan-700"><Scale size={28}/></div><div><span className="block text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">Muestreos y pesos medidos</span></div></button>
-            <button onClick={() => setMaterialModalOpen(true)} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-5 text-left transition-all hover:border-orange-500 hover:shadow-md"><div className="rounded-full bg-orange-100 p-3 text-orange-700"><PackageMinus size={28}/></div><div><span className="block text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">Envasado o acondicionado</span></div></button>
-          </div>
-        </Card>
 
         {/* Recent Events Log */}
         <Card className="mt-8">
@@ -1463,6 +1508,7 @@ export default function OEEApplication() {
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
+          {role === 'responsible_operator' && <SidebarItem icon={Activity} label="Indicadores adicionales" viewId="additional_indicators" />}
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
           {role === 'supervisor' && <SidebarItem icon={Settings} label="Administración" viewId="administration" />}
           {role === 'supervisor' && <SidebarItem icon={Bot} label="Asistente IA" viewId="ai" />}
@@ -1512,6 +1558,7 @@ export default function OEEApplication() {
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
             {currentView === 'work_orders' && WorkOrdersView()}
+            {currentView === 'additional_indicators' && AdditionalIndicatorsView()}
             {currentView === 'active_production' && <ActiveProductionView />}
             {currentView === 'validations' && <ValidationsView />}
             {currentView === 'administration' && AdministrationView()}
