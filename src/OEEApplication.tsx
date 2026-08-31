@@ -459,7 +459,372 @@ export default function OEEApplication() {
         <Card className="p-6">
           <p className="text-sm font-medium text-slate-500 mb-1">Calidad</p>
           <h3 className="text-3xl font-bold text-emerald-500">96.8%</h3>
-          <div className="mt-4 flex justify-between text-xs text-slate-500 openSupportModal = () => {
+          <div className="mt-4 flex justify-between text-xs text-slate-500 border-t pt-2">
+            <span>Producido: 37.8k</span>
+            <span className="text-rose-500">Rechazo: 1.2k</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="p-6 lg:col-span-2">
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Tendencia OEE (Últimos 7 días)</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={CHART_DATA_TREND}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
+                <YAxis domain={[60, 100]} axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
+                <RechartsTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Legend />
+                <Line type="monotone" dataKey="oee" name="OEE" stroke={COLORS.primary} strokeWidth={3} dot={{r: 4}} activeDot={{r: 6}} />
+                <Line type="monotone" dataKey="a" name="Disp." stroke={COLORS.warning} strokeWidth={2} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="p" name="Rend." stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="q" name="Calidad" stroke={COLORS.success} strokeWidth={2} strokeDasharray="5 5" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Pareto de Pérdidas (Minutos)</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={CHART_DATA_PARETO} margin={{top: 20, right: 20, bottom: 20, left: 0}}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="cause" scale="band" tick={{fontSize: 10, fill: '#64748b'}} interval={0} angle={-45} textAnchor="end" />
+                <YAxis yAxisId="left" tick={{fontSize: 12}} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{fontSize: 12}} tickFormatter={(v)=>`${v}%`} />
+                <RechartsTooltip />
+                <Bar yAxisId="left" dataKey="minutes" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#0f172a" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+
+  const DashboardView = () => {
+    const liveRecord = activeSession ? { ...activeSession, id: `LIVE-${activeSession.id}`, date: new Date().toISOString().slice(0, 10), metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
+    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const average = (key) => sourceRecords.length ? sourceRecords.reduce((sum, record) => sum + Number(record.metrics?.[key] || 0), 0) / sourceRecords.length : 0;
+    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
+    const qualitySummary = sourceRecords.reduce((summary, record) => ({
+      reprocess: summary.reprocess + Number(record.reprocessQty || 0),
+      waste: summary.waste + Number(record.wasteQty || 0),
+      produced: summary.produced + Number(record.realQty || 0)
+    }), { reprocess: 0, waste: 0, produced: 0 });
+    const productFilteredRecords = sourceRecords.filter(record => !dashboardProduct || record.product === dashboardProduct);
+    const materialSummary = productFilteredRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
+      const key = `${item.type}|${item.unit}`;
+      summary[key] = (summary[key] || 0) + Number(item.quantity || 0);
+      return summary;
+    }, {});
+    const trendData = sourceRecords.map(record => ({ name: record.workOrderId || record.id, oee: Number(record.metrics?.oee || 0), a: Number(record.metrics?.a || 0), p: Number(record.metrics?.p || 0), q: Number(record.metrics?.q || 0) }));
+    const lossMap = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability' || loss.category === 'planned_availability').reduce((map, loss) => {
+      map[loss.cause] = (map[loss.cause] || 0) + Number(loss.duration || 0);
+      return map;
+    }, {});
+    const paretoData = Object.entries(lossMap).map(([cause, minutes]) => ({ cause, minutes }));
+    const overweightData = sourceRecords.filter(record => !dashboardProduct || record.product === dashboardProduct).flatMap(record => (record.overweights || []).map((item, index) => ({
+      sequence: `${record.workOrderId || record.id}-${index + 1}`, weight: Number(item.weight), quantity: Number(item.quantity), product: record.product
+    })));
+    const configuredTarget = sourceRecords.find(record => (!dashboardProduct || record.product === dashboardProduct) && Number(record.targetWeight) > 0)?.targetWeight;
+    const centralWeight = Number(configuredTarget) || (overweightData.length ? overweightData.reduce((sum, item) => sum + item.weight * item.quantity, 0) / overweightData.reduce((sum, item) => sum + item.quantity, 0) : 0);
+    const laborByWorker = sourceRecords.reduce((summary: Record<string, { worker: string; planned: number; recorded: number; processes: number }>, record) => {
+      const processHours = elapsedMinutes(record.processStart, record.processEnd) / 60;
+      const responsible = record.operator || 'Sin responsable';
+      if (!summary[responsible]) summary[responsible] = { worker: responsible, planned: 0, recorded: 0, processes: 0 };
+      summary[responsible].planned += Number(record.plannedWorkerHours) || processHours;
+      summary[responsible].recorded += processHours;
+      summary[responsible].processes += 1;
+      (record.supportOperators || []).forEach(operator => {
+        if (!summary[operator.name]) summary[operator.name] = { worker: operator.name, planned: 0, recorded: 0, processes: 0 };
+        summary[operator.name].recorded += Number(operator.hours) || 0;
+        summary[operator.name].processes += 1;
+      });
+      return summary;
+    }, {} as Record<string, { worker: string; planned: number; recorded: number; processes: number }>);
+    const laborPlanningData = Object.values(laborByWorker) as Array<{ worker: string; planned: number; recorded: number; processes: number }>;
+    const laborByLocation = sourceRecords.reduce((summary: Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>, record) => {
+      const addHours = (worker, hours, participation) => {
+        if (!worker || Number(hours) <= 0) return;
+        const line = record.line || 'Sin línea';
+        const machine = record.machine || 'Sin equipo';
+        const key = `${worker}|${line}|${machine}|${participation}`;
+        if (!summary[key]) summary[key] = { worker, line, machine, participation, hours: 0 };
+        summary[key].hours += Number(hours);
+      };
+      addHours(record.operator || record.registrar, elapsedMinutes(record.processStart, record.processEnd) / 60, 'Registrador');
+      (record.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || 0, 'Apoyo de proceso'));
+      (record.losses || []).filter(loss => loss.category === 'planned_availability').forEach(loss => (loss.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || Number(loss.duration || 0) / 60, 'Apoyo en detención')));
+      return summary;
+    }, {} as Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>);
+    const laborLocationData = Object.values(laborByLocation) as Array<{ worker: string; line: string; machine: string; participation: string; hours: number }>;
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div><h2 className="text-2xl font-bold text-slate-800">Dashboard de Planta</h2><p className="text-slate-500">Indicadores calculados únicamente con OT cargadas y registros reales.</p></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-500">Filtrar sobrepeso y descarte por producto</label><select className="min-w-64 rounded-lg border border-slate-300 bg-white p-2.5" value={dashboardProduct} onChange={(event) => setDashboardProduct(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div>
+        </div>
+        {sourceRecords.length === 0 ? <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Aún no hay datos productivos</h3><p className="mt-1 text-slate-500">Carga una plantilla de OT y registra una OEE para alimentar este dashboard.</p></Card> : <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[['OEE global', average('oee'), 'border-blue-500'], ['Disponibilidad', average('a'), 'border-amber-500'], ['Rendimiento', average('p'), 'border-purple-500'], ['Calidad', average('q'), 'border-emerald-500']].map(([label, value, border]) => <Card key={label} className={`border-l-4 ${border} p-5`}><p className="text-sm font-medium text-slate-500">{label}</p><p className="mt-2 text-3xl font-bold" style={{ color: label === 'OEE global' ? getOEEColor(Number(value)) : undefined }}>{Number(value).toFixed(1)}%</p></Card>)}
+          </div>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <Card className="p-6 xl:col-span-2"><h3 className="mb-5 font-bold text-slate-800">OEE por orden de trabajo</h3><div className="h-72"><ResponsiveContainer><LineChart data={trendData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name"/><YAxis domain={[0,100]}/><RechartsTooltip/><Legend/><Line dataKey="oee" name="OEE" stroke={COLORS.primary} strokeWidth={3}/><Line dataKey="a" name="Disponibilidad" stroke={COLORS.warning}/><Line dataKey="p" name="Rendimiento" stroke="#8b5cf6"/><Line dataKey="q" name="Calidad" stroke={COLORS.success}/></LineChart></ResponsiveContainer></div></Card>
+            <Card className="p-6"><h3 className="font-bold text-slate-800">Calidad registrada</h3><div className="mt-6 space-y-4"><div className="rounded-lg bg-slate-50 p-4"><p className="text-sm text-slate-500">Producción total</p><p className="text-2xl font-bold">{qualitySummary.produced.toLocaleString()} und</p></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg bg-amber-50 p-4 text-amber-800"><p className="text-sm">Reproceso</p><p className="text-xl font-bold">{qualitySummary.reprocess.toLocaleString()}</p></div><div className="rounded-lg bg-rose-50 p-4 text-rose-800"><p className="text-sm">Desperdicio</p><p className="text-xl font-bold">{qualitySummary.waste.toLocaleString()}</p></div></div></div></Card>
+          </div>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Pérdidas de disponibilidad reales</h3>{paretoData.length ? <div className="h-64"><ResponsiveContainer><BarChart data={paretoData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="cause" tick={{fontSize:10}}/><YAxis/><RechartsTooltip/><Bar dataKey="minutes" name="Minutos" fill={COLORS.critical}/></BarChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pérdidas registradas.</p>}</Card>
+            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Control de sobrepeso</h3>{overweightData.length ? <div className="h-64"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="sequence" name="Registro"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Promedio"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pesos registrados para el filtro.</p>}</Card>
+          </div>
+          <Card className="p-6"><h3 className="font-bold text-slate-800">Descarte de materiales para planificación</h3><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.keys(materialSummary).length ? Object.entries(materialSummary).map(([key, quantity]) => { const [type, unit] = key.split('|'); return <div key={key} className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Material de {type.toLowerCase()}</p><p className="text-2xl font-bold text-slate-800">{Number(quantity).toLocaleString()} <span className="text-sm font-medium">{unit}</span></p></div>; }) : <p className="text-slate-500">Sin descartes registrados.</p>}</div></Card>
+          <Card className="p-6">
+            <div className="mb-5"><h3 className="font-bold text-slate-800">Planificación de horas en planta</h3><p className="text-sm text-slate-500">Compara las horas planificadas en la OT con las horas que cada trabajador permaneció dentro del proceso.</p></div>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="h-72"><ResponsiveContainer><BarChart data={laborPlanningData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="worker" tick={{fontSize:10}}/><YAxis unit=" h"/><RechartsTooltip/><Legend/><Bar dataKey="planned" name="Horas planificadas" fill={COLORS.primary}/><Bar dataKey="recorded" name="Horas registradas" fill={COLORS.success}/></BarChart></ResponsiveContainer></div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Trabajador</th><th className="p-2 text-right">Plan.</th><th className="p-2 text-right">Registr.</th><th className="p-2 text-right">Procesos</th></tr></thead><tbody>{laborPlanningData.map(item => <tr key={item.worker} className="border-b border-slate-100"><td className="p-2 font-medium">{item.worker}</td><td className="p-2 text-right">{item.planned.toFixed(2)} h</td><td className="p-2 text-right">{item.recorded.toFixed(2)} h</td><td className="p-2 text-right">{item.processes}</td></tr>)}</tbody></table></div>
+            </div>
+          </Card>
+          <Card className="p-6"><div className="mb-4"><h3 className="font-bold text-slate-800">Horas de personal por línea y equipo</h3><p className="text-sm text-slate-500">Detalle adicional del tiempo registrado dentro de cada máquina o línea.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Personal</th><th className="p-2">Línea</th><th className="p-2">Equipo</th><th className="p-2">Participación</th><th className="p-2 text-right">Horas</th></tr></thead><tbody>{laborLocationData.length ? laborLocationData.map(item => <tr key={`${item.worker}-${item.line}-${item.machine}-${item.participation}`} className="border-b border-slate-100"><td className="p-2 font-medium">{item.worker}</td><td className="p-2">{item.line}</td><td className="p-2">{item.machine}</td><td className="p-2">{item.participation}</td><td className="p-2 text-right font-semibold">{item.hours.toFixed(2)} h</td></tr>) : <tr><td colSpan={5} className="p-8 text-center text-slate-500">Sin horas registradas.</td></tr>}</tbody></table></div></Card>
+        </>}
+      </div>
+    );
+  };
+
+  const Dashboard2View = () => {
+    const liveRecord = activeSession ? { ...activeSession, metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
+    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
+    const filteredRecords = sourceRecords.filter(record => !dashboardProduct || record.product === dashboardProduct);
+    const averageOee = filteredRecords.length ? filteredRecords.reduce((sum, record) => sum + Number(record.metrics?.oee || 0), 0) / filteredRecords.length : 0;
+    const totalProduction = filteredRecords.reduce((sum, record) => sum + Number(record.realQty || 0), 0);
+    const totalDowntime = filteredRecords.flatMap(record => record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const totalDiscard = filteredRecords.flatMap(record => record.materialDiscards || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const plannedMinutes = filteredRecords.reduce((sum, record) => sum + elapsedMinutes(record.processStart, record.processEnd), 0);
+    const operatingMinutes = Math.max(0, plannedMinutes - totalDowntime);
+    const theoreticalProduction = filteredRecords.reduce((sum, record) => {
+      const recordMinutes = Math.max(0, elapsedMinutes(record.processStart, record.processEnd) - (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((lossSum, loss) => lossSum + Number(loss.duration || 0), 0));
+      return sum + recordMinutes * Number(record.standardSpeed || 0);
+    }, 0);
+    const goodProduction = filteredRecords.reduce((sum, record) => sum + Math.max(0, Number(record.realQty || 0) - Number(record.rejectQty || 0)), 0);
+    const availabilityRate = plannedMinutes ? operatingMinutes / plannedMinutes : 0;
+    const performanceRate = theoreticalProduction ? totalProduction / theoreticalProduction : 0;
+    const qualityRate = totalProduction ? goodProduction / totalProduction : 0;
+    const leanOee = availabilityRate * performanceRate * qualityRate;
+    const boundedPercent = value => Math.max(0, Math.min(100, value * 100));
+    const machineMap = filteredRecords.reduce((summary, record) => {
+      const machine = record.machine || 'Sin máquina';
+      if (!summary[machine]) summary[machine] = { machine, orders: 0, production: 0, downtime: 0, oeeTotal: 0 };
+      summary[machine].orders += 1;
+      summary[machine].production += Number(record.realQty || 0);
+      summary[machine].oeeTotal += Number(record.metrics?.oee || 0);
+      summary[machine].downtime += (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+      return summary;
+    }, {});
+    const machineData = Object.values(machineMap).map((item: any) => ({ ...item, oee: item.orders ? item.oeeTotal / item.orders : 0 }));
+    const orderStatusData = Object.entries(WORK_ORDER_STATUS).map(([status, config]) => ({ name: config.label, value: workOrders.filter(order => order.status === status).length })).filter(item => item.value > 0);
+    return <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 p-7 text-white shadow-xl"><div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-200">Centro de control · Biomont</p><h2 className="mt-2 text-3xl font-bold">Dashboard 2</h2><p className="mt-1 text-blue-100">Vista ejecutiva de producción, eficiencia y desviaciones por máquina.</p></div><div><label className="mb-1 block text-xs font-semibold text-blue-100">Producto</label><select className="min-w-64 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900" value={dashboardProduct} onChange={(event) => setDashboardProduct(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div></div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[
+        ['OEE promedio', `${averageOee.toFixed(1)}%`, 'text-blue-700', 'bg-blue-100'],
+        ['Producción registrada', `${totalProduction.toLocaleString()} und`, 'text-emerald-700', 'bg-emerald-100'],
+        ['Tiempo detenido', `${totalDowntime.toLocaleString()} min`, 'text-amber-700', 'bg-amber-100'],
+        ['Descarte acumulado', totalDiscard.toLocaleString(), 'text-rose-700', 'bg-rose-100']
+      ].map(([label,value,color,bg]) => <Card key={label} className="p-5"><div className={`mb-4 inline-flex rounded-xl p-2 ${bg}`}><Activity className={color} size={20}/></div><p className="text-sm font-medium text-slate-500">{label}</p><p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p></Card>)}</div>
+      <Card className="p-6"><div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Descomposición Lean</p><h3 className="mt-1 text-xl font-bold text-slate-900">Cómo se construye el OEE</h3><p className="text-sm text-slate-500">Del tiempo programado hasta las unidades buenas a la primera.</p></div><div className="rounded-xl bg-slate-950 px-5 py-3 text-white"><p className="text-xs uppercase tracking-wider text-slate-400">OEE consolidado</p><p className="text-3xl font-bold">{boundedPercent(leanOee).toFixed(1)}%</p></div></div>
+        <div className="space-y-4">
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Tiempo programado</p><p className="text-xs text-slate-500">Base de planificación</p></div><div className="h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex h-full w-full items-center justify-center bg-amber-300 px-3 text-sm font-bold text-amber-950">{(plannedMinutes/60).toFixed(2)} horas</div></div><div className="text-right text-sm font-semibold text-slate-600">100%</div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Disponibilidad</p><p className="text-xs text-slate-500">Tiempo productivo</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-cyan-500 px-2 text-sm font-bold text-white" style={{width:`${boundedPercent(availabilityRate)}%`}}>{operatingMinutes ? `${(operatingMinutes/60).toFixed(2)} h` : ''}</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {totalDowntime.toFixed(0)} min</div></div><div className="text-right"><p className="font-bold text-cyan-700">{boundedPercent(availabilityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">A = B / A</p></div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Rendimiento</p><p className="text-xs text-slate-500">Producción vs. capacidad</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-orange-400 px-2 text-sm font-bold text-orange-950" style={{width:`${boundedPercent(performanceRate)}%`}}>{totalProduction.toLocaleString()} und</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {Math.max(0,theoreticalProduction-totalProduction).toLocaleString()} und</div></div><div className="text-right"><p className="font-bold text-orange-600">{boundedPercent(performanceRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Real / Teórica</p></div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Calidad</p><p className="text-xs text-slate-500">Buenas a la primera</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
+          <div className="grid gap-2 border-t border-slate-200 pt-4 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-900">Resultado OEE</p><p className="text-xs text-slate-500">A × R × C</p></div><div className="h-12 overflow-hidden rounded-lg bg-rose-100"><div className="flex h-full items-center justify-center bg-emerald-600 px-3 text-sm font-bold text-white" style={{width:`${boundedPercent(leanOee)}%`}}>Tiempo de valor agregado</div></div><div className="text-right text-xl font-bold text-emerald-700">{boundedPercent(leanOee).toFixed(1)}%</div></div>
+        </div>
+      </Card>
+      {filteredRecords.length ? <div className="grid gap-6 xl:grid-cols-3"><Card className="p-6 xl:col-span-2"><div className="mb-5"><h3 className="font-bold text-slate-800">Desempeño por máquina</h3><p className="text-sm text-slate-500">OEE promedio y minutos de detención acumulados.</p></div><div className="h-72"><ResponsiveContainer><ComposedChart data={machineData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="machine" tick={{fontSize:10}}/><YAxis yAxisId="left" domain={[0,100]} unit="%"/><YAxis yAxisId="right" orientation="right" unit=" min"/><RechartsTooltip/><Legend/><Bar yAxisId="left" dataKey="oee" name="OEE" fill={COLORS.primary} radius={[6,6,0,0]}/><Line yAxisId="right" dataKey="downtime" name="Detención" stroke={COLORS.critical} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div></Card><Card className="p-6"><h3 className="font-bold text-slate-800">Estado de órdenes</h3><div className="mt-5 h-64"><ResponsiveContainer><PieChart><Pie data={orderStatusData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={4}>{orderStatusData.map((_, index) => <Cell key={index} fill={[COLORS.primary,COLORS.success,COLORS.warning,COLORS.critical,'#8b5cf6'][index % 5]}/>)}</Pie><RechartsTooltip/><Legend/></PieChart></ResponsiveContainer></div></Card></div> : <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Sin información para mostrar</h3><p className="text-slate-500">Registra una OEE para alimentar el Dashboard 2.</p></Card>}
+      <Card className="p-6"><div className="mb-4"><h3 className="font-bold text-slate-800">Resumen operativo por máquina</h3><p className="text-sm text-slate-500">Datos consolidados de las OT y del producto seleccionado.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="p-3">Máquina</th><th className="p-3 text-right">OT</th><th className="p-3 text-right">Producción</th><th className="p-3 text-right">OEE</th><th className="p-3 text-right">Detención</th></tr></thead><tbody>{machineData.map(item => <tr key={item.machine} className="border-b border-slate-100"><td className="p-3 font-semibold">{item.machine}</td><td className="p-3 text-right">{item.orders}</td><td className="p-3 text-right">{item.production.toLocaleString()}</td><td className="p-3 text-right font-bold" style={{color:getOEEColor(item.oee)}}>{item.oee.toFixed(1)}%</td><td className="p-3 text-right">{item.downtime.toLocaleString()} min</td></tr>)}</tbody></table></div></Card>
+    </div>;
+  };
+
+  const WorkOrdersView = () => {
+    const activeStatuses = ['not_started', 'in_progress'];
+    const normalized = (value) => String(value || '').toLowerCase();
+    const visibleWorkOrders = workOrders.filter((order) => {
+      if (!activeStatuses.includes(order.status)) return false;
+      const operatorHasAccess = role === 'supervisor' || productionLineOperators.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
+      if (!operatorHasAccess) return false;
+      return normalized(order.id).includes(normalized(workOrderFilters.code))
+        && normalized(order.lot).includes(normalized(workOrderFilters.lot))
+        && normalized(order.product).includes(normalized(workOrderFilters.product))
+        && normalized(`${order.line} ${order.machine}`).includes(normalized(workOrderFilters.line))
+        && String(order.plannedQty).includes(workOrderFilters.quantity.replace(/[^0-9]/g, ''))
+        && (!workOrderFilters.status || order.status === workOrderFilters.status)
+        && normalized(order.registrar || 'Sin registrador').includes(normalized(workOrderFilters.registrar));
+    });
+    const updateFilter = (field, value) => setWorkOrderFilters(current => ({ ...current, [field]: value }));
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
+            <p className="text-slate-500">{role === 'supervisor' ? 'Carga y consulta las OT por lote, línea y registrador.' : 'Se muestran las OT disponibles para tu línea de producción.'}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {role === 'supervisor' && (
+              <>
+                <input ref={workOrdersFileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleWorkOrdersImport} />
+                <Button variant="secondary" className="!py-2" onClick={downloadWorkOrderTemplate}><Download size={18} /> Descargar plantilla</Button>
+                <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}><Upload size={18} /> Cargar Excel</Button>
+              </>
+            )}
+            <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
+          </div>
+        </div>
+
+        {importMessage && <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{importMessage}</div>}
+
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
+                  <th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
+                </tr>
+                  <tr className="border-b border-slate-200 bg-white">
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar lote" value={workOrderFilters.lot} onChange={(e) => updateFilter('lot', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
+                    <th className="p-2"></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
+                    <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.registrar} onChange={(e) => updateFilter('registrar', e.target.value)}><option value="">Todos</option><option value="Sin registrador">Sin registrador</option>{productionLineOperators.map(operator => <option key={operator.id} value={operator.name}>{operator.name}</option>)}</select></th>
+                  </tr>
+              </thead>
+              <tbody>
+                {visibleWorkOrders.map((ot) => (
+                  <tr key={ot.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                    <td className="p-4 font-semibold text-blue-700">{ot.lot}</td><td className="p-4 font-medium text-slate-800">{ot.id}</td><td className="p-4 text-slate-600">{ot.product}</td>
+                    <td className="p-4"><div className="text-sm text-slate-800">{ot.line}</div><div className="text-xs text-slate-500">{ot.machine}</div></td>
+                    <td className="p-4 text-slate-600">{ot.plannedQty.toLocaleString()} und</td>
+                    <td className="p-4 font-semibold text-purple-700">{Number(ot.standardSpeed || 0).toLocaleString()} und/min</td>
+                    <td className="p-4"><Badge variant={WORK_ORDER_STATUS[ot.status].variant}>{WORK_ORDER_STATUS[ot.status].label}</Badge></td>
+                    <td className="p-4">
+                      {role === 'supervisor' ? (
+                        <div className="flex min-w-48 items-center gap-2"><span className="flex-1 text-sm font-medium text-slate-700">{ot.registrar || 'Sin registrador'}</span>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
+                      ) : (
+                         <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'in_progress' && ot.registrar !== currentUser.name} onClick={() => {
+                           setActiveSession(current => current?.id === ot.id ? current : {...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, productionRegistered: false, losses: [], supportOperators: [], overweights: ot.overweights || [], materialDiscards: ot.materialDiscards || [], targetWeight: ot.targetWeight || '', standardSpeed: Number(ot.standardSpeed) || plantEquipment.find(machine => machine.name === ot.machine || machine.id === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
+                          setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress', registrar: currentUser.name } : order));
+                          setCurrentView('active_production');
+                        }}>{ot.status === 'in_progress' ? 'Continuar OEE' : 'Registrar OEE'} <ArrowRight size={16} /></Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {visibleWorkOrders.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-500">No hay OT disponibles para los filtros o tu línea de producción.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+        <Modal isOpen={Boolean(selectedLiveOrder)} onClose={() => setSelectedLiveOrder(null)} title="Detalle OEE en tiempo real"><RecordDetails record={selectedLiveOrder} metrics={selectedLiveOrder ? calculateSessionMetrics(selectedLiveOrder) : null} readOnly /></Modal>
+      </div>
+    );
+  };
+
+  const AdditionalIndicatorsView = () => {
+    const normalized = (value) => String(value || '').toLowerCase();
+    const availableOrders = workOrders.filter(order => {
+      if (!['not_started', 'in_progress'].includes(order.status)) return false;
+      return productionLineOperators.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
+    });
+    const selectedOrder = availableOrders.find(order => order.id === additionalOrderId);
+    const validSamples = additionalOverweightDraft.length > 0 && additionalOverweightDraft.every(sample => Number(sample.sampleSize) > 0 && sample.weights.length === Number(sample.sampleSize) && sample.weights.every(weight => Number(weight) > 0));
+    const updateSampleSize = (sampleIndex, value) => {
+      const sampleSize = Math.max(0, Math.min(100, parseInt(value) || 0));
+      setAdditionalOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? { ...sample, sampleSize: value, weights: Array.from({ length: sampleSize }, (_, weightIndex) => sample.weights[weightIndex] || '') } : sample));
+    };
+    const updateWeight = (sampleIndex, weightIndex, value) => setAdditionalOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? { ...sample, weights: sample.weights.map((weight, index) => index === weightIndex ? value : weight) } : sample));
+    const openOverweight = () => {
+      if (!selectedOrder) return;
+      setAdditionalTargetWeight(String(selectedOrder.targetWeight || ''));
+      setAdditionalOverweightDraft([{ sampleSize: '', weights: [''] }]);
+      setAdditionalOverweightOpen(true);
+    };
+    const saveOverweight = () => {
+      if (!selectedOrder || !validSamples) return;
+      const timestamp = Date.now();
+      const rows = additionalOverweightDraft.flatMap((sample, sampleIndex) => sample.weights.map((weight, weightIndex) => ({ id: timestamp + Math.random(), sampleId: `M-${timestamp}-${sampleIndex + 1}`, sampleSize: Number(sample.sampleSize), measurement: weightIndex + 1, weight: Number(weight), quantity: 1 })));
+      const update = order => order.id === selectedOrder.id ? { ...order, targetWeight: Number(additionalTargetWeight) || order.targetWeight, overweights: [...(order.overweights || []), ...rows] } : order;
+      setWorkOrders(current => current.map(update));
+      setActiveSession(current => current?.id === selectedOrder.id ? update(current) : current);
+      setAdditionalOverweightOpen(false);
+    };
+    const saveMaterial = () => {
+      if (!selectedOrder || !additionalMaterialForm.material.trim() || Number(additionalMaterialForm.quantity) <= 0) return;
+      const row = { ...additionalMaterialForm, id: Date.now(), quantity: Number(additionalMaterialForm.quantity) };
+      const update = order => order.id === selectedOrder.id ? { ...order, materialDiscards: [...(order.materialDiscards || []), row] } : order;
+      setWorkOrders(current => current.map(update));
+      setActiveSession(current => current?.id === selectedOrder.id ? update(current) : current);
+      setAdditionalMaterialForm({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+      setAdditionalMaterialOpen(false);
+    };
+    return <div className="space-y-6 animate-in fade-in duration-300">
+      <div><h2 className="text-2xl font-bold text-slate-800">Indicadores adicionales</h2><p className="text-slate-500">Selecciona una orden de trabajo para registrar sobrepeso o descarte de material.</p></div>
+      <Card className="p-6"><label className="mb-2 block text-sm font-semibold text-slate-700">Orden de trabajo</label><select value={additionalOrderId} onChange={(event) => setAdditionalOrderId(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white p-3"><option value="">Selecciona una OT...</option>{availableOrders.map(order => <option key={order.id} value={order.id}>Lote {order.lot} · OT {order.id} · {order.product} · {order.machine}</option>)}</select>{availableOrders.length === 0 && <p className="mt-3 text-sm text-slate-500">No hay OT disponibles para tus líneas de producción.</p>}</Card>
+      {selectedOrder ? <><Card className="p-5"><div className="grid gap-3 text-sm sm:grid-cols-4"><div><p className="text-slate-500">Lote</p><p className="font-bold">{selectedOrder.lot}</p></div><div><p className="text-slate-500">Código OT</p><p className="font-bold">{selectedOrder.id}</p></div><div><p className="text-slate-500">Producto</p><p className="font-bold">{selectedOrder.product}</p></div><div><p className="text-slate-500">Máquina</p><p className="font-bold">{selectedOrder.machine}</p></div></div></Card><div className="grid grid-cols-1 gap-4 md:grid-cols-2"><button onClick={openOverweight} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-6 text-left transition-all hover:border-cyan-500 hover:shadow-md"><div className="rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><div><span className="block text-lg font-bold text-slate-800">Registrar sobrepeso</span><span className="text-sm text-slate-500">{(selectedOrder.overweights || []).length} peso(s) registrados</span></div></button><button onClick={() => setAdditionalMaterialOpen(true)} className="flex items-center gap-4 rounded-xl border-2 border-slate-200 bg-white p-6 text-left transition-all hover:border-orange-500 hover:shadow-md"><div className="rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><div><span className="block text-lg font-bold text-slate-800">Descarte de material</span><span className="text-sm text-slate-500">{(selectedOrder.materialDiscards || []).length} descarte(s) registrados</span></div></button></div></> : <Card className="p-10 text-center text-slate-500"><ClipboardList className="mx-auto mb-3 text-slate-300" size={42}/><p>Selecciona una OT para habilitar los registros.</p></Card>}
+      <Modal isOpen={additionalOverweightOpen} onClose={() => setAdditionalOverweightOpen(false)} title={`Registrar sobrepeso · OT ${selectedOrder?.id || ''}`}><div className="space-y-4"><div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={additionalTargetWeight} onChange={(event) => setAdditionalTargetWeight(event.target.value)}/></div>{additionalOverweightDraft.map((sample,sampleIndex) => <div key={sampleIndex} className="space-y-3 rounded-lg border border-slate-200 p-4"><div className="flex items-end gap-2"><div className="flex-1"><label className="text-sm font-semibold">Cantidad muestreada</label><input type="number" min="1" max="100" className="mt-1 w-full rounded border border-slate-300 p-2" value={sample.sampleSize} onChange={(event) => updateSampleSize(sampleIndex,event.target.value)}/></div><button disabled={additionalOverweightDraft.length === 1} onClick={() => setAdditionalOverweightDraft(current => current.filter((_,index) => index !== sampleIndex))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>{Number(sample.sampleSize) > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{sample.weights.map((weight,weightIndex) => <div key={weightIndex}><label className="text-xs font-semibold text-slate-500">Peso {weightIndex+1} (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={weight} onChange={(event) => updateWeight(sampleIndex,weightIndex,event.target.value)}/></div>)}</div>}</div>)}<Button variant="secondary" className="w-full" onClick={() => setAdditionalOverweightDraft(current => [...current,{sampleSize:'',weights:['']}])}><Plus size={18}/> Agregar otro muestreo</Button><Button className="w-full" disabled={!validSamples} onClick={saveOverweight}>Guardar en OT {selectedOrder?.id}</Button></div></Modal>
+      <Modal isOpen={additionalMaterialOpen} onClose={() => setAdditionalMaterialOpen(false)} title={`Descarte de material · OT ${selectedOrder?.id || ''}`}><div className="space-y-4"><div><label className="mb-1 block text-sm font-semibold">Tipo de material</label><select className="w-full rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.type} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option><option>Materia prima</option><option>Producto terminado</option></select></div><div><label className="mb-1 block text-sm font-semibold">Material descartado</label><input className="w-full rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.material} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,material:event.target.value})}/></div><div className="grid grid-cols-2 gap-3"><input type="number" min="0" className="rounded-lg border border-slate-300 p-3" placeholder="Cantidad" value={additionalMaterialForm.quantity} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,quantity:event.target.value})}/><select className="rounded-lg border border-slate-300 p-3" value={additionalMaterialForm.unit} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,unit:event.target.value})}><option>unidades</option><option>kg</option><option>metros</option></select></div><textarea className="w-full rounded-lg border border-slate-300 p-3" placeholder="Comentario opcional" value={additionalMaterialForm.comment} onChange={(event) => setAdditionalMaterialForm({...additionalMaterialForm,comment:event.target.value})}/><Button className="w-full" disabled={!additionalMaterialForm.material.trim() || Number(additionalMaterialForm.quantity) <= 0} onClick={saveMaterial}>Guardar en OT {selectedOrder?.id}</Button></div></Modal>
+    </div>;
+  };
+
+  const ActiveProductionView = () => {
+    const [lossModalOpen, setLossModalOpen] = useState(false);
+    const [lossType, setLossType] = useState('availability'); // availability, performance, quality
+    const [lossForm, setLossForm] = useState({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
+    const [editingLossId, setEditingLossId] = useState(null);
+    
+    const [qtyModalOpen, setQtyModalOpen] = useState(false);
+    const [qtyForm, setQtyForm] = useState({ produced: '' });
+    const [ticketModalOpen, setTicketModalOpen] = useState(false);
+    const [maintenanceTicket, setMaintenanceTicket] = useState(null);
+    const [ticketForm, setTicketForm] = useState({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
+    const [supportModalOpen, setSupportModalOpen] = useState(false);
+    const [sharedSupportHours, setSharedSupportHours] = useState('');
+    const [supportOperators, setSupportOperators] = useState(INITIAL_SUPPORT_OPERATORS);
+    const [supportDraft, setSupportDraft] = useState([]);
+    const [plannedSupportDraft, setPlannedSupportDraft] = useState([]);
+    const [newSupportName, setNewSupportName] = useState('');
+    const [supportSearch, setSupportSearch] = useState('');
+    const [overweightModalOpen, setOverweightModalOpen] = useState(false);
+    const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
+    const [targetWeight, setTargetWeight] = useState('');
+    const [materialModalOpen, setMaterialModalOpen] = useState(false);
+    const [materialForm, setMaterialForm] = useState({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+
+    if (!activeSession) return <div>No hay sesión activa.</div>;
+
+    const metrics = calculateSessionMetrics(activeSession);
+    const supportCandidates = [...productionLineOperators, ...supportOperators].filter((operator, index, list) => list.findIndex(item => item.id === operator.id) === index);
+    const filteredSupportOperators = supportCandidates.filter(operator => `${operator.name} ${operator.id}`.toLowerCase().includes(supportSearch.trim().toLowerCase()));
+    const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
+    const performanceLosses = activeSession.losses.filter(loss => loss.category === 'performance');
+    const editingPerformanceIndex = performanceLosses.findIndex(loss => loss.id === editingLossId);
+    const performanceStartTime = editingPerformanceIndex >= 0
+      ? (editingPerformanceIndex === 0 ? activeSession.processStart : performanceLosses[editingPerformanceIndex - 1].speedEndTime)
+      : (activeSession.performanceEndTime || activeSession.processStart);
+
+    const updateProcessTime = (field, value) => {
+      setActiveSession(current => current ? { ...current, [field]: value } : current);
+    };
+
+    const openSupportModal = () => {
       setSupportDraft((activeSession.supportOperators || []).map(item => ({ ...item })));
       setSupportModalOpen(true);
     };
