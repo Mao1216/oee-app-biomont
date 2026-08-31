@@ -215,6 +215,8 @@ export default function OEEApplication() {
   const [dashboard2Product, setDashboard2Product] = useState('');
   const [dashboardLaborLine, setDashboardLaborLine] = useState('');
   const [dashboardLaborEquipment, setDashboardLaborEquipment] = useState('');
+  const [dashboardLot, setDashboardLot] = useState('');
+  const [dashboardOrder, setDashboardOrder] = useState('');
   const [additionalOrderId, setAdditionalOrderId] = useState('');
   const [additionalOverweightOpen, setAdditionalOverweightOpen] = useState(false);
   const [additionalOverweightDraft, setAdditionalOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
@@ -513,7 +515,10 @@ export default function OEEApplication() {
 
   const DashboardView = () => {
     const liveRecord = activeSession ? { ...activeSession, id: `LIVE-${activeSession.id}`, date: new Date().toISOString().slice(0, 10), metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
-    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const allSourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const dashboardLots = Array.from(new Set(allSourceRecords.map(record => record.lot).filter(Boolean))).sort();
+    const dashboardOrders = dashboardLot ? Array.from(new Set(allSourceRecords.filter(record => record.lot === dashboardLot).map(record => record.workOrderId || String(record.id).replace(/^LIVE-|^REC-/, '')).filter(Boolean))).sort() : [];
+    const sourceRecords = allSourceRecords.filter(record => (!dashboardLot || record.lot === dashboardLot) && (!dashboardOrder || (record.workOrderId || String(record.id).replace(/^LIVE-|^REC-/, '')) === dashboardOrder));
     const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
     const productFilteredRecords = dashboardDiscardProduct ? sourceRecords.filter(record => record.product === dashboardDiscardProduct) : [];
     const materialSummary = productFilteredRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
@@ -537,7 +542,173 @@ export default function OEEApplication() {
         const line = record.line || 'Sin línea';
         const machine = record.machine || 'Sin equipo';
         const key = `${worker}|${line}|${machine}|${participation}`;
-        if (!summary[key]) summary[key] = { worker,sName="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
+        if (!summary[key]) summary[key] = { worker, line, machine, participation, hours: 0 };
+        summary[key].hours += Number(hours);
+      };
+      addHours(record.operator || record.registrar, elapsedMinutes(record.processStart, record.processEnd) / 60, 'Registrador');
+      (record.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || 0, 'Apoyo de proceso'));
+      (record.losses || []).filter(loss => loss.category === 'planned_availability').forEach(loss => (loss.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || Number(loss.duration || 0) / 60, 'Apoyo en detención')));
+      return summary;
+    }, {} as Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>);
+    const laborLocationData = Object.values(laborByLocation) as Array<{ worker: string; line: string; machine: string; participation: string; hours: number }>;
+    const laborLines = Array.from(new Set(laborLocationData.map(item => item.line))).sort();
+    const laborEquipment = dashboardLaborLine ? Array.from(new Set(laborLocationData.filter(item => item.line === dashboardLaborLine).map(item => item.machine))).sort() : [];
+    const laborRanking = dashboardLaborLine && dashboardLaborEquipment ? Object.values(laborLocationData.filter(item => item.line === dashboardLaborLine && item.machine === dashboardLaborEquipment).reduce((summary: Record<string, { worker: string; line: string; machine: string; participations: string[]; hours: number }>, item) => {
+      if (!summary[item.worker]) summary[item.worker] = { worker: item.worker, line: item.line, machine: item.machine, participations: [], hours: 0 };
+      summary[item.worker].hours += item.hours;
+      if (!summary[item.worker].participations.includes(item.participation)) summary[item.worker].participations.push(item.participation);
+      return summary;
+    }, {})).sort((first, second) => second.hours - first.hours) : [];
+    const plannedMinutes = sourceRecords.reduce((sum, record) => sum + elapsedMinutes(record.processStart, record.processEnd), 0);
+    const totalDowntime = sourceRecords.flatMap(record => record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const operatingMinutes = Math.max(0, plannedMinutes - totalDowntime);
+    const totalProduction = sourceRecords.reduce((sum, record) => sum + Number(record.realQty || 0), 0);
+    const theoreticalProduction = sourceRecords.reduce((sum, record) => {
+      const recordMinutes = Math.max(0, elapsedMinutes(record.processStart, record.processEnd) - (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((lossSum, loss) => lossSum + Number(loss.duration || 0), 0));
+      return sum + recordMinutes * Number(record.standardSpeed || 0);
+    }, 0);
+    const goodProduction = sourceRecords.reduce((sum, record) => sum + Math.max(0, Number(record.realQty || 0) - Number(record.rejectQty || 0)), 0);
+    const availabilityRate = plannedMinutes ? operatingMinutes / plannedMinutes : 0;
+    const performanceRate = theoreticalProduction ? totalProduction / theoreticalProduction : 0;
+    const qualityRate = totalProduction ? goodProduction / totalProduction : 0;
+    const leanOee = availabilityRate * performanceRate * qualityRate;
+    const boundedPercent = value => Math.max(0, Math.min(100, value * 100));
+    const machineSummary = sourceRecords.reduce((summary, record) => {
+      const machine = record.machine || 'Sin máquina';
+      if (!summary[machine]) summary[machine] = { machine, orders: 0, downtime: 0, oeeTotal: 0 };
+      summary[machine].orders += 1;
+      summary[machine].oeeTotal += Number(record.metrics?.oee || 0);
+      summary[machine].downtime += (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+      return summary;
+    }, {});
+    const machineOverviewData = Object.values(machineSummary).map((item: any) => ({ ...item, oee: item.orders ? item.oeeTotal / item.orders : 0 }));
+    const orderStatusOverview = Object.entries(WORK_ORDER_STATUS).map(([status, config]) => ({ name: config.label, value: workOrders.filter(order => order.status === status).length })).filter(item => item.value > 0);
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 p-7 text-white shadow-xl"><div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-200">Centro de control · BIOEE</p><h2 className="mt-3 text-4xl font-bold">Dashboard</h2></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold text-blue-100">Lote</label><select className="min-w-56 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900" value={dashboardLot} onChange={(event) => { setDashboardLot(event.target.value); setDashboardOrder(''); }}><option value="">Todos los lotes</option>{dashboardLots.map(lot => <option key={lot}>{lot}</option>)}</select></div><div><label className="mb-1 block text-xs font-semibold text-blue-100">Orden de trabajo</label><select disabled={!dashboardLot} className="min-w-56 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900 disabled:bg-slate-200 disabled:text-slate-500" value={dashboardOrder} onChange={(event) => setDashboardOrder(event.target.value)}><option value="">{dashboardLot ? 'Todas las OT' : 'Selecciona un lote'}</option>{dashboardOrders.map(order => <option key={order}>{order}</option>)}</select></div></div></div></div>
+        {allSourceRecords.length === 0 ? <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Aún no hay datos productivos</h3><p className="mt-1 text-slate-500">Carga una plantilla de OT y registra una OEE para alimentar este dashboard.</p></Card> : sourceRecords.length === 0 ? <Card className="p-12 text-center"><Search className="mx-auto mb-3 text-slate-300" size={44}/><h3 className="font-bold text-slate-700">Sin datos para esta selección</h3><p className="mt-1 text-slate-500">Selecciona otro lote u orden de trabajo.</p></Card> : <>
+          <Card className="p-6"><div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Descomposición Lean</p><h3 className="mt-1 text-xl font-bold text-slate-900">Cómo se construye el OEE</h3><p className="text-sm text-slate-500">Del tiempo programado hasta las unidades buenas a la primera.</p></div><div className="rounded-xl bg-slate-950 px-5 py-3 text-white"><p className="text-xs uppercase tracking-wider text-slate-400">OEE consolidado</p><p className="text-3xl font-bold">{boundedPercent(leanOee).toFixed(1)}%</p></div></div><div className="space-y-4">
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Tiempo programado</p><p className="text-xs text-slate-500">Base de planificación</p></div><div className="h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex h-full w-full items-center justify-center bg-amber-300 px-3 text-sm font-bold text-amber-950">{(plannedMinutes/60).toFixed(2)} horas</div></div><div className="text-right text-sm font-semibold text-slate-600">100%</div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Disponibilidad</p><p className="text-xs text-slate-500">Tiempo productivo</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-cyan-500 px-2 text-sm font-bold text-white" style={{width:`${boundedPercent(availabilityRate)}%`}}>{operatingMinutes ? `${(operatingMinutes/60).toFixed(2)} h` : ''}</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {totalDowntime.toFixed(0)} min</div></div><div className="text-right"><p className="font-bold text-cyan-700">{boundedPercent(availabilityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Productivo / Programado</p></div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Rendimiento</p><p className="text-xs text-slate-500">Producción vs. capacidad</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-orange-400 px-2 text-sm font-bold text-orange-950" style={{width:`${boundedPercent(performanceRate)}%`}}>{totalProduction.toLocaleString()} und</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {Math.max(0,theoreticalProduction-totalProduction).toLocaleString()} und</div></div><div className="text-right"><p className="font-bold text-orange-600">{boundedPercent(performanceRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Real / Teórica</p></div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Calidad</p><p className="text-xs text-slate-500">Buenas a la primera</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
+          </div></Card>
+          <div className="grid gap-6 xl:grid-cols-3"><Card className="p-6 xl:col-span-2"><div className="mb-5"><h3 className="font-bold text-slate-800">Desempeño por máquina</h3><p className="text-sm text-slate-500">OEE promedio y minutos de detención acumulados.</p></div><div className="h-72"><ResponsiveContainer><ComposedChart data={machineOverviewData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="machine" tick={{fontSize:10}}/><YAxis yAxisId="left" domain={[0,100]} unit="%"/><YAxis yAxisId="right" orientation="right" unit=" min"/><RechartsTooltip/><Legend/><Bar yAxisId="left" dataKey="oee" name="OEE" fill={COLORS.primary} radius={[6,6,0,0]}/><Line yAxisId="right" dataKey="downtime" name="Detención" stroke={COLORS.critical} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div></Card><Card className="p-6"><h3 className="font-bold text-slate-800">Estado de órdenes</h3><div className="mt-5 h-64"><ResponsiveContainer><PieChart><Pie data={orderStatusOverview} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={4}>{orderStatusOverview.map((_, index) => <Cell key={index} fill={[COLORS.primary,COLORS.success,COLORS.warning,COLORS.critical,'#8b5cf6'][index % 5]}/>)}</Pie><RechartsTooltip/><Legend/></PieChart></ResponsiveContainer></div></Card></div>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Pérdidas de disponibilidad reales</h3>{paretoData.length ? <div className="h-64"><ResponsiveContainer><BarChart data={paretoData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="cause" tick={{fontSize:10}}/><YAxis/><RechartsTooltip/><Bar dataKey="minutes" name="Minutos" fill={COLORS.critical}/></BarChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pérdidas registradas.</p>}</Card>
+            <Card className="p-6"><div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><h3 className="font-bold text-slate-800">Control de sobrepeso</h3><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardOverweightProduct} onChange={(event) => setDashboardOverweightProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div>{overweightData.length ? <div className="h-64"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="sequence" name="Registro"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Promedio"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">{dashboardOverweightProduct ? 'Sin pesos registrados para el producto.' : 'Selecciona un producto para ver los datos.'}</p>}</Card>
+          </div>
+          <Card className="p-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><h3 className="font-bold text-slate-800">Descarte de materiales para planificación</h3><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardDiscardProduct} onChange={(event) => setDashboardDiscardProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.keys(materialSummary).length ? Object.entries(materialSummary).map(([key, quantity]) => { const [type, unit] = key.split('|'); return <div key={key} className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Material de {type.toLowerCase()}</p><p className="text-2xl font-bold text-slate-800">{Number(quantity).toLocaleString()} <span className="text-sm font-medium">{unit}</span></p></div>; }) : <p className="text-slate-500">{dashboardDiscardProduct ? 'Sin descartes registrados para el producto.' : 'Selecciona un producto para ver los datos.'}</p>}</div></Card>
+          <Card className="p-6"><div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><h3 className="font-bold text-slate-800">Horas de personal por línea y equipo</h3><p className="text-sm text-slate-500">Ranking de operarios ordenado de mayor a menor cantidad de horas.</p></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold text-slate-500">Línea</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardLaborLine} onChange={(event) => { setDashboardLaborLine(event.target.value); setDashboardLaborEquipment(''); }}><option value="" disabled>Selecciona línea</option>{laborLines.map(line => <option key={line}>{line}</option>)}</select></div><div><label className="mb-1 block text-xs font-semibold text-slate-500">Equipo</label><select disabled={!dashboardLaborLine} className="min-w-56 rounded-lg border border-slate-300 bg-white p-2 disabled:bg-slate-100 disabled:text-slate-400" value={dashboardLaborEquipment} onChange={(event) => setDashboardLaborEquipment(event.target.value)}><option value="" disabled>Selecciona equipo</option>{laborEquipment.map(equipment => <option key={equipment}>{equipment}</option>)}</select></div></div></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Posición</th><th className="p-2">Personal</th><th className="p-2">Línea</th><th className="p-2">Equipo</th><th className="p-2">Participación</th><th className="p-2 text-right">Horas</th></tr></thead><tbody>{laborRanking.length ? laborRanking.map((item, index) => <tr key={item.worker} className="border-b border-slate-100"><td className="p-2"><span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${index === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>{index + 1}</span></td><td className="p-2 font-medium">{item.worker}</td><td className="p-2">{item.line}</td><td className="p-2">{item.machine}</td><td className="p-2">{item.participations.join(', ')}</td><td className="p-2 text-right font-semibold">{item.hours.toFixed(2)} h</td></tr>) : <tr><td colSpan={6} className="p-8 text-center text-slate-500">{dashboardLaborLine && dashboardLaborEquipment ? 'Sin horas registradas para esta selección.' : 'Selecciona una línea y un equipo para ver el ranking.'}</td></tr>}</tbody></table></div></Card>
+        </>}
+      </div>
+    );
+  };
+
+  const Dashboard2View = () => {
+    const liveRecord = activeSession ? { ...activeSession, metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
+    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
+    const filteredRecords = sourceRecords.filter(record => !dashboard2Product || record.product === dashboard2Product);
+    const averageOee = filteredRecords.length ? filteredRecords.reduce((sum, record) => sum + Number(record.metrics?.oee || 0), 0) / filteredRecords.length : 0;
+    const totalProduction = filteredRecords.reduce((sum, record) => sum + Number(record.realQty || 0), 0);
+    const totalDowntime = filteredRecords.flatMap(record => record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const totalDiscard = filteredRecords.flatMap(record => record.materialDiscards || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const plannedMinutes = filteredRecords.reduce((sum, record) => sum + elapsedMinutes(record.processStart, record.processEnd), 0);
+    const operatingMinutes = Math.max(0, plannedMinutes - totalDowntime);
+    const theoreticalProduction = filteredRecords.reduce((sum, record) => {
+      const recordMinutes = Math.max(0, elapsedMinutes(record.processStart, record.processEnd) - (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((lossSum, loss) => lossSum + Number(loss.duration || 0), 0));
+      return sum + recordMinutes * Number(record.standardSpeed || 0);
+    }, 0);
+    const goodProduction = filteredRecords.reduce((sum, record) => sum + Math.max(0, Number(record.realQty || 0) - Number(record.rejectQty || 0)), 0);
+    const availabilityRate = plannedMinutes ? operatingMinutes / plannedMinutes : 0;
+    const performanceRate = theoreticalProduction ? totalProduction / theoreticalProduction : 0;
+    const qualityRate = totalProduction ? goodProduction / totalProduction : 0;
+    const leanOee = availabilityRate * performanceRate * qualityRate;
+    const boundedPercent = value => Math.max(0, Math.min(100, value * 100));
+    const machineMap = filteredRecords.reduce((summary, record) => {
+      const machine = record.machine || 'Sin máquina';
+      if (!summary[machine]) summary[machine] = { machine, orders: 0, production: 0, downtime: 0, oeeTotal: 0 };
+      summary[machine].orders += 1;
+      summary[machine].production += Number(record.realQty || 0);
+      summary[machine].oeeTotal += Number(record.metrics?.oee || 0);
+      summary[machine].downtime += (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+      return summary;
+    }, {});
+    const machineData = Object.values(machineMap).map((item: any) => ({ ...item, oee: item.orders ? item.oeeTotal / item.orders : 0 }));
+    const orderStatusData = Object.entries(WORK_ORDER_STATUS).map(([status, config]) => ({ name: config.label, value: workOrders.filter(order => order.status === status).length })).filter(item => item.value > 0);
+    return <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 p-7 text-white shadow-xl"><div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-200">Centro de control · Biomont</p><h2 className="mt-2 text-3xl font-bold">Dashboard 2</h2><p className="mt-1 text-blue-100">Vista ejecutiva de producción, eficiencia y desviaciones por máquina.</p></div><div><label className="mb-1 block text-xs font-semibold text-blue-100">Producto</label><select className="min-w-64 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900" value={dashboard2Product} onChange={(event) => setDashboard2Product(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div></div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[
+        ['OEE promedio', `${averageOee.toFixed(1)}%`, 'text-blue-700', 'bg-blue-100'],
+        ['Producción registrada', `${totalProduction.toLocaleString()} und`, 'text-emerald-700', 'bg-emerald-100'],
+        ['Tiempo detenido', `${totalDowntime.toLocaleString()} min`, 'text-amber-700', 'bg-amber-100'],
+        ['Descarte acumulado', totalDiscard.toLocaleString(), 'text-rose-700', 'bg-rose-100']
+      ].map(([label,value,color,bg]) => <Card key={label} className="p-5"><div className={`mb-4 inline-flex rounded-xl p-2 ${bg}`}><Activity className={color} size={20}/></div><p className="text-sm font-medium text-slate-500">{label}</p><p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p></Card>)}</div>
+      <Card className="p-6"><div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Descomposición Lean</p><h3 className="mt-1 text-xl font-bold text-slate-900">Cómo se construye el OEE</h3><p className="text-sm text-slate-500">Del tiempo programado hasta las unidades buenas a la primera.</p></div><div className="rounded-xl bg-slate-950 px-5 py-3 text-white"><p className="text-xs uppercase tracking-wider text-slate-400">OEE consolidado</p><p className="text-3xl font-bold">{boundedPercent(leanOee).toFixed(1)}%</p></div></div>
+        <div className="space-y-4">
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Tiempo programado</p><p className="text-xs text-slate-500">Base de planificación</p></div><div className="h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex h-full w-full items-center justify-center bg-amber-300 px-3 text-sm font-bold text-amber-950">{(plannedMinutes/60).toFixed(2)} horas</div></div><div className="text-right text-sm font-semibold text-slate-600">100%</div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Disponibilidad</p><p className="text-xs text-slate-500">Tiempo productivo</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-cyan-500 px-2 text-sm font-bold text-white" style={{width:`${boundedPercent(availabilityRate)}%`}}>{operatingMinutes ? `${(operatingMinutes/60).toFixed(2)} h` : ''}</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {totalDowntime.toFixed(0)} min</div></div><div className="text-right"><p className="font-bold text-cyan-700">{boundedPercent(availabilityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">A = B / A</p></div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Rendimiento</p><p className="text-xs text-slate-500">Producción vs. capacidad</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-orange-400 px-2 text-sm font-bold text-orange-950" style={{width:`${boundedPercent(performanceRate)}%`}}>{totalProduction.toLocaleString()} und</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {Math.max(0,theoreticalProduction-totalProduction).toLocaleString()} und</div></div><div className="text-right"><p className="font-bold text-orange-600">{boundedPercent(performanceRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Real / Teórica</p></div></div>
+          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Calidad</p><p className="text-xs text-slate-500">Buenas a la primera</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
+        </div>
+      </Card>
+      {filteredRecords.length ? <div className="grid gap-6 xl:grid-cols-3"><Card className="p-6 xl:col-span-2"><div className="mb-5"><h3 className="font-bold text-slate-800">Desempeño por máquina</h3><p className="text-sm text-slate-500">OEE promedio y minutos de detención acumulados.</p></div><div className="h-72"><ResponsiveContainer><ComposedChart data={machineData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="machine" tick={{fontSize:10}}/><YAxis yAxisId="left" domain={[0,100]} unit="%"/><YAxis yAxisId="right" orientation="right" unit=" min"/><RechartsTooltip/><Legend/><Bar yAxisId="left" dataKey="oee" name="OEE" fill={COLORS.primary} radius={[6,6,0,0]}/><Line yAxisId="right" dataKey="downtime" name="Detención" stroke={COLORS.critical} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div></Card><Card className="p-6"><h3 className="font-bold text-slate-800">Estado de órdenes</h3><div className="mt-5 h-64"><ResponsiveContainer><PieChart><Pie data={orderStatusData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={4}>{orderStatusData.map((_, index) => <Cell key={index} fill={[COLORS.primary,COLORS.success,COLORS.warning,COLORS.critical,'#8b5cf6'][index % 5]}/>)}</Pie><RechartsTooltip/><Legend/></PieChart></ResponsiveContainer></div></Card></div> : <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Sin información para mostrar</h3><p className="text-slate-500">Registra una OEE para alimentar el Dashboard 2.</p></Card>}
+      <Card className="p-6"><div className="mb-4"><h3 className="font-bold text-slate-800">Resumen operativo por máquina</h3><p className="text-sm text-slate-500">Datos consolidados de las OT y del producto seleccionado.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="p-3">Máquina</th><th className="p-3 text-right">OT</th><th className="p-3 text-right">Producción</th><th className="p-3 text-right">OEE</th><th className="p-3 text-right">Detención</th></tr></thead><tbody>{machineData.map(item => <tr key={item.machine} className="border-b border-slate-100"><td className="p-3 font-semibold">{item.machine}</td><td className="p-3 text-right">{item.orders}</td><td className="p-3 text-right">{item.production.toLocaleString()}</td><td className="p-3 text-right font-bold" style={{color:getOEEColor(item.oee)}}>{item.oee.toFixed(1)}%</td><td className="p-3 text-right">{item.downtime.toLocaleString()} min</td></tr>)}</tbody></table></div></Card>
+    </div>;
+  };
+
+  const WorkOrdersView = () => {
+    const activeStatuses = ['not_started', 'in_progress'];
+    const normalized = (value) => String(value || '').toLowerCase();
+    const visibleWorkOrders = workOrders.filter((order) => {
+      if (!activeStatuses.includes(order.status)) return false;
+      const operatorHasAccess = role === 'supervisor' || productionLineOperators.some(operator => operator.id === currentUser?.id && (operator.machines.includes('*') || operator.machines.some(machine => normalized(`${order.machine} ${order.line}`).includes(normalized(machine)))));
+      if (!operatorHasAccess) return false;
+      return normalized(order.id).includes(normalized(workOrderFilters.code))
+        && normalized(order.lot).includes(normalized(workOrderFilters.lot))
+        && normalized(order.product).includes(normalized(workOrderFilters.product))
+        && normalized(`${order.line} ${order.machine}`).includes(normalized(workOrderFilters.line))
+        && String(order.plannedQty).includes(workOrderFilters.quantity.replace(/[^0-9]/g, ''))
+        && (!workOrderFilters.status || order.status === workOrderFilters.status)
+        && normalized(order.registrar || 'Sin registrador').includes(normalized(workOrderFilters.registrar));
+    });
+    const updateFilter = (field, value) => setWorkOrderFilters(current => ({ ...current, [field]: value }));
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">Órdenes de Trabajo</h2>
+            <p className="text-slate-500">{role === 'supervisor' ? 'Carga y consulta las OT por lote, línea y registrador.' : 'Se muestran las OT disponibles para tu línea de producción.'}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {role === 'supervisor' && (
+              <>
+                <input ref={workOrdersFileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleWorkOrdersImport} />
+                <Button variant="secondary" className="!py-2" onClick={downloadWorkOrderTemplate}><Download size={18} /> Descargar plantilla</Button>
+                <Button variant="primary" className="!py-2" onClick={() => workOrdersFileInputRef.current?.click()}><Upload size={18} /> Cargar Excel</Button>
+              </>
+            )}
+            <Button variant="secondary" className="!py-2"><Search size={18} /> Buscar</Button>
+          </div>
+        </div>
+
+        {importMessage && <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{importMessage}</div>}
+
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
+                  <th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
+                </tr>
+                  <tr className="border-b border-slate-200 bg-white">
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar lote" value={workOrderFilters.lot} onChange={(e) => updateFilter('lot', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar producto" value={workOrderFilters.product} onChange={(e) => updateFilter('product', e.target.value)} /></th>
+                    <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar línea o máquina" value={workOrderFilters.line} onChange={(e) => updateFilter('line', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar cantidad" value={workOrderFilters.quantity} onChange={(e) => updateFilter('quantity', e.target.value)} /></th>
                     <th className="p-2"></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
