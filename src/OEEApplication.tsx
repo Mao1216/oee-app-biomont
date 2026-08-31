@@ -212,7 +212,6 @@ export default function OEEApplication() {
   const [selectedLiveOrder, setSelectedLiveOrder] = useState(null);
   const [dashboardOverweightProduct, setDashboardOverweightProduct] = useState('');
   const [dashboardDiscardProduct, setDashboardDiscardProduct] = useState('');
-  const [dashboard2Product, setDashboard2Product] = useState('');
   const [dashboardLaborLine, setDashboardLaborLine] = useState('');
   const [dashboardLaborEquipment, setDashboardLaborEquipment] = useState('');
   const [dashboardLot, setDashboardLot] = useState('');
@@ -604,59 +603,6 @@ export default function OEEApplication() {
         </>}
       </div>
     );
-  };
-
-  const Dashboard2View = () => {
-    const liveRecord = activeSession ? { ...activeSession, metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
-    const sourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
-    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
-    const filteredRecords = sourceRecords.filter(record => !dashboard2Product || record.product === dashboard2Product);
-    const averageOee = filteredRecords.length ? filteredRecords.reduce((sum, record) => sum + Number(record.metrics?.oee || 0), 0) / filteredRecords.length : 0;
-    const totalProduction = filteredRecords.reduce((sum, record) => sum + Number(record.realQty || 0), 0);
-    const totalDowntime = filteredRecords.flatMap(record => record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
-    const totalDiscard = filteredRecords.flatMap(record => record.materialDiscards || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-    const plannedMinutes = filteredRecords.reduce((sum, record) => sum + elapsedMinutes(record.processStart, record.processEnd), 0);
-    const operatingMinutes = Math.max(0, plannedMinutes - totalDowntime);
-    const theoreticalProduction = filteredRecords.reduce((sum, record) => {
-      const recordMinutes = Math.max(0, elapsedMinutes(record.processStart, record.processEnd) - (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((lossSum, loss) => lossSum + Number(loss.duration || 0), 0));
-      return sum + recordMinutes * Number(record.standardSpeed || 0);
-    }, 0);
-    const goodProduction = filteredRecords.reduce((sum, record) => sum + Math.max(0, Number(record.realQty || 0) - Number(record.rejectQty || 0)), 0);
-    const availabilityRate = plannedMinutes ? operatingMinutes / plannedMinutes : 0;
-    const performanceRate = theoreticalProduction ? totalProduction / theoreticalProduction : 0;
-    const qualityRate = totalProduction ? goodProduction / totalProduction : 0;
-    const leanOee = availabilityRate * performanceRate * qualityRate;
-    const boundedPercent = value => Math.max(0, Math.min(100, value * 100));
-    const machineMap = filteredRecords.reduce((summary, record) => {
-      const machine = record.machine || 'Sin máquina';
-      if (!summary[machine]) summary[machine] = { machine, orders: 0, production: 0, downtime: 0, oeeTotal: 0 };
-      summary[machine].orders += 1;
-      summary[machine].production += Number(record.realQty || 0);
-      summary[machine].oeeTotal += Number(record.metrics?.oee || 0);
-      summary[machine].downtime += (record.losses || []).filter(loss => ['availability', 'planned_availability'].includes(loss.category)).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
-      return summary;
-    }, {});
-    const machineData = Object.values(machineMap).map((item: any) => ({ ...item, oee: item.orders ? item.oeeTotal / item.orders : 0 }));
-    const orderStatusData = Object.entries(WORK_ORDER_STATUS).map(([status, config]) => ({ name: config.label, value: workOrders.filter(order => order.status === status).length })).filter(item => item.value > 0);
-    return <div className="space-y-6 animate-in fade-in duration-300">
-      <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 p-7 text-white shadow-xl"><div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-200">Centro de control · Biomont</p><h2 className="mt-2 text-3xl font-bold">Dashboard 2</h2><p className="mt-1 text-blue-100">Vista ejecutiva de producción, eficiencia y desviaciones por máquina.</p></div><div><label className="mb-1 block text-xs font-semibold text-blue-100">Producto</label><select className="min-w-64 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900" value={dashboard2Product} onChange={(event) => setDashboard2Product(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div></div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[
-        ['OEE promedio', `${averageOee.toFixed(1)}%`, 'text-blue-700', 'bg-blue-100'],
-        ['Producción registrada', `${totalProduction.toLocaleString()} und`, 'text-emerald-700', 'bg-emerald-100'],
-        ['Tiempo detenido', `${totalDowntime.toLocaleString()} min`, 'text-amber-700', 'bg-amber-100'],
-        ['Descarte acumulado', totalDiscard.toLocaleString(), 'text-rose-700', 'bg-rose-100']
-      ].map(([label,value,color,bg]) => <Card key={label} className="p-5"><div className={`mb-4 inline-flex rounded-xl p-2 ${bg}`}><Activity className={color} size={20}/></div><p className="text-sm font-medium text-slate-500">{label}</p><p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p></Card>)}</div>
-      <Card className="p-6"><div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Descomposición Lean</p><h3 className="mt-1 text-xl font-bold text-slate-900">Cómo se construye el OEE</h3><p className="text-sm text-slate-500">Del tiempo programado hasta las unidades buenas a la primera.</p></div><div className="rounded-xl bg-slate-950 px-5 py-3 text-white"><p className="text-xs uppercase tracking-wider text-slate-400">OEE consolidado</p><p className="text-3xl font-bold">{boundedPercent(leanOee).toFixed(1)}%</p></div></div>
-        <div className="space-y-4">
-          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Tiempo programado</p><p className="text-xs text-slate-500">Base de planificación</p></div><div className="h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex h-full w-full items-center justify-center bg-amber-300 px-3 text-sm font-bold text-amber-950">{(plannedMinutes/60).toFixed(2)} horas</div></div><div className="text-right text-sm font-semibold text-slate-600">100%</div></div>
-          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Disponibilidad</p><p className="text-xs text-slate-500">Tiempo productivo</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-cyan-500 px-2 text-sm font-bold text-white" style={{width:`${boundedPercent(availabilityRate)}%`}}>{operatingMinutes ? `${(operatingMinutes/60).toFixed(2)} h` : ''}</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {totalDowntime.toFixed(0)} min</div></div><div className="text-right"><p className="font-bold text-cyan-700">{boundedPercent(availabilityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">A = B / A</p></div></div>
-          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Rendimiento</p><p className="text-xs text-slate-500">Producción vs. capacidad</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-orange-400 px-2 text-sm font-bold text-orange-950" style={{width:`${boundedPercent(performanceRate)}%`}}>{totalProduction.toLocaleString()} und</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {Math.max(0,theoreticalProduction-totalProduction).toLocaleString()} und</div></div><div className="text-right"><p className="font-bold text-orange-600">{boundedPercent(performanceRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Real / Teórica</p></div></div>
-          <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Calidad</p><p className="text-xs text-slate-500">Buenas a la primera</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(1)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
-        </div>
-      </Card>
-      {filteredRecords.length ? <div className="grid gap-6 xl:grid-cols-3"><Card className="p-6 xl:col-span-2"><div className="mb-5"><h3 className="font-bold text-slate-800">Desempeño por máquina</h3><p className="text-sm text-slate-500">OEE promedio y minutos de detención acumulados.</p></div><div className="h-72"><ResponsiveContainer><ComposedChart data={machineData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="machine" tick={{fontSize:10}}/><YAxis yAxisId="left" domain={[0,100]} unit="%"/><YAxis yAxisId="right" orientation="right" unit=" min"/><RechartsTooltip/><Legend/><Bar yAxisId="left" dataKey="oee" name="OEE" fill={COLORS.primary} radius={[6,6,0,0]}/><Line yAxisId="right" dataKey="downtime" name="Detención" stroke={COLORS.critical} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div></Card><Card className="p-6"><h3 className="font-bold text-slate-800">Estado de órdenes</h3><div className="mt-5 h-64"><ResponsiveContainer><PieChart><Pie data={orderStatusData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={4}>{orderStatusData.map((_, index) => <Cell key={index} fill={[COLORS.primary,COLORS.success,COLORS.warning,COLORS.critical,'#8b5cf6'][index % 5]}/>)}</Pie><RechartsTooltip/><Legend/></PieChart></ResponsiveContainer></div></Card></div> : <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Sin información para mostrar</h3><p className="text-slate-500">Registra una OEE para alimentar el Dashboard 2.</p></Card>}
-      <Card className="p-6"><div className="mb-4"><h3 className="font-bold text-slate-800">Resumen operativo por máquina</h3><p className="text-sm text-slate-500">Datos consolidados de las OT y del producto seleccionado.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-slate-500"><th className="p-3">Máquina</th><th className="p-3 text-right">OT</th><th className="p-3 text-right">Producción</th><th className="p-3 text-right">OEE</th><th className="p-3 text-right">Detención</th></tr></thead><tbody>{machineData.map(item => <tr key={item.machine} className="border-b border-slate-100"><td className="p-3 font-semibold">{item.machine}</td><td className="p-3 text-right">{item.orders}</td><td className="p-3 text-right">{item.production.toLocaleString()}</td><td className="p-3 text-right font-bold" style={{color:getOEEColor(item.oee)}}>{item.oee.toFixed(1)}%</td><td className="p-3 text-right">{item.downtime.toLocaleString()} min</td></tr>)}</tbody></table></div></Card>
-    </div>;
   };
 
   const WorkOrdersView = () => {
@@ -1617,7 +1563,6 @@ export default function OEEApplication() {
         
         <div className="p-4 flex-1 space-y-2 overflow-y-auto">
           {role === 'supervisor' && <SidebarItem icon={LayoutDashboard} label="Dashboard" viewId="dashboard" />}
-          {role === 'supervisor' && <SidebarItem icon={Activity} label="Dashboard 2" viewId="dashboard_2" />}
           <SidebarItem icon={ClipboardList} label="Órdenes (OT)" viewId="work_orders" />
           {role === 'responsible_operator' && <SidebarItem icon={Activity} label="Indicadores adicionales" viewId="additional_indicators" />}
           {role === 'supervisor' && <SidebarItem icon={CheckSquare} label="Validaciones" viewId="validations" />}
@@ -1668,7 +1613,6 @@ export default function OEEApplication() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50">
           <div className="max-w-7xl mx-auto">
             {currentView === 'dashboard' && <DashboardView />}
-            {currentView === 'dashboard_2' && <Dashboard2View />}
             {currentView === 'work_orders' && WorkOrdersView()}
             {currentView === 'additional_indicators' && AdditionalIndicatorsView()}
             {currentView === 'active_production' && <ActiveProductionView />}
