@@ -192,10 +192,16 @@ export default function OEEApplication() {
   const [records, setRecords] = useState([]);
   const [workOrders, setWorkOrders] = useState([]);
   const [productionLineOperators, setProductionLineOperators] = useState(() => loadStoredCatalog('bioee-production-line-operators', PRODUCTION_LINE_OPERATORS));
+  const [plantEquipment, setPlantEquipment] = useState(() => loadStoredCatalog('bioee-plant-equipment', MACHINES));
   const [lossCauses, setLossCauses] = useState(() => loadStoredCatalog('bioee-loss-causes', LOSS_CAUSES));
+  const [adminSection, setAdminSection] = useState('');
+  const [adminPlantSection, setAdminPlantSection] = useState('');
   const [adminLossCategory, setAdminLossCategory] = useState('availability');
   const [adminNewCause, setAdminNewCause] = useState('');
-  const [adminOperatorForm, setAdminOperatorForm] = useState({ name: '', machines: '' });
+  const [adminOperatorForm, setAdminOperatorForm] = useState({ name: '', machines: [] as string[] });
+  const [adminEditingOperatorId, setAdminEditingOperatorId] = useState('');
+  const [adminEquipmentForm, setAdminEquipmentForm] = useState({ name: '', line: '', standardSpeed: '' });
+  const [adminEditingEquipmentId, setAdminEditingEquipmentId] = useState('');
   const [importMessage, setImportMessage] = useState('');
   const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', lot: '', product: '', line: '', quantity: '', status: '', registrar: '' });
   const workOrdersFileInputRef = useRef(null);
@@ -216,6 +222,7 @@ export default function OEEApplication() {
     : role ? DEMO_CREDENTIALS[role] : null;
 
   useEffect(() => { window.localStorage.setItem('bioee-production-line-operators', JSON.stringify(productionLineOperators)); }, [productionLineOperators]);
+  useEffect(() => { window.localStorage.setItem('bioee-plant-equipment', JSON.stringify(plantEquipment)); }, [plantEquipment]);
   useEffect(() => { window.localStorage.setItem('bioee-loss-causes', JSON.stringify(lossCauses)); }, [lossCauses]);
 
   const handleLogin = (event) => {
@@ -501,7 +508,8 @@ export default function OEEApplication() {
       waste: summary.waste + Number(record.wasteQty || 0),
       produced: summary.produced + Number(record.realQty || 0)
     }), { reprocess: 0, waste: 0, produced: 0 });
-    const materialSummary = sourceRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
+    const productFilteredRecords = sourceRecords.filter(record => !dashboardProduct || record.product === dashboardProduct);
+    const materialSummary = productFilteredRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
       const key = `${item.type}|${item.unit}`;
       summary[key] = (summary[key] || 0) + Number(item.quantity || 0);
       return summary;
@@ -532,12 +540,27 @@ export default function OEEApplication() {
       return summary;
     }, {} as Record<string, { worker: string; planned: number; recorded: number; processes: number }>);
     const laborPlanningData = Object.values(laborByWorker) as Array<{ worker: string; planned: number; recorded: number; processes: number }>;
+    const laborByLocation = sourceRecords.reduce((summary: Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>, record) => {
+      const addHours = (worker, hours, participation) => {
+        if (!worker || Number(hours) <= 0) return;
+        const line = record.line || 'Sin línea';
+        const machine = record.machine || 'Sin equipo';
+        const key = `${worker}|${line}|${machine}|${participation}`;
+        if (!summary[key]) summary[key] = { worker, line, machine, participation, hours: 0 };
+        summary[key].hours += Number(hours);
+      };
+      addHours(record.operator || record.registrar, elapsedMinutes(record.processStart, record.processEnd) / 60, 'Registrador');
+      (record.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || 0, 'Apoyo de proceso'));
+      (record.losses || []).filter(loss => loss.category === 'planned_availability').forEach(loss => (loss.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || Number(loss.duration || 0) / 60, 'Apoyo en detención')));
+      return summary;
+    }, {} as Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>);
+    const laborLocationData = Object.values(laborByLocation) as Array<{ worker: string; line: string; machine: string; participation: string; hours: number }>;
 
     return (
       <div className="space-y-6 animate-in fade-in duration-300">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div><h2 className="text-2xl font-bold text-slate-800">Dashboard de Planta</h2><p className="text-slate-500">Indicadores calculados únicamente con OT cargadas y registros reales.</p></div>
-          <div><label className="mb-1 block text-xs font-semibold text-slate-500">Filtrar sobrepeso por producto</label><select className="min-w-64 rounded-lg border border-slate-300 bg-white p-2.5" value={dashboardProduct} onChange={(event) => setDashboardProduct(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div>
+          <div><label className="mb-1 block text-xs font-semibold text-slate-500">Filtrar sobrepeso y descarte por producto</label><select className="min-w-64 rounded-lg border border-slate-300 bg-white p-2.5" value={dashboardProduct} onChange={(event) => setDashboardProduct(event.target.value)}><option value="">Todos los productos</option>{products.map(product => <option key={product}>{product}</option>)}</select></div>
         </div>
         {sourceRecords.length === 0 ? <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Aún no hay datos productivos</h3><p className="mt-1 text-slate-500">Carga una plantilla de OT y registra una OEE para alimentar este dashboard.</p></Card> : <>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -559,6 +582,7 @@ export default function OEEApplication() {
               <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Trabajador</th><th className="p-2 text-right">Plan.</th><th className="p-2 text-right">Registr.</th><th className="p-2 text-right">Procesos</th></tr></thead><tbody>{laborPlanningData.map(item => <tr key={item.worker} className="border-b border-slate-100"><td className="p-2 font-medium">{item.worker}</td><td className="p-2 text-right">{item.planned.toFixed(2)} h</td><td className="p-2 text-right">{item.recorded.toFixed(2)} h</td><td className="p-2 text-right">{item.processes}</td></tr>)}</tbody></table></div>
             </div>
           </Card>
+          <Card className="p-6"><div className="mb-4"><h3 className="font-bold text-slate-800">Horas de personal por línea y equipo</h3><p className="text-sm text-slate-500">Detalle adicional del tiempo registrado dentro de cada máquina o línea.</p></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Personal</th><th className="p-2">Línea</th><th className="p-2">Equipo</th><th className="p-2">Participación</th><th className="p-2 text-right">Horas</th></tr></thead><tbody>{laborLocationData.length ? laborLocationData.map(item => <tr key={`${item.worker}-${item.line}-${item.machine}-${item.participation}`} className="border-b border-slate-100"><td className="p-2 font-medium">{item.worker}</td><td className="p-2">{item.line}</td><td className="p-2">{item.machine}</td><td className="p-2">{item.participation}</td><td className="p-2 text-right font-semibold">{item.hours.toFixed(2)} h</td></tr>) : <tr><td colSpan={5} className="p-8 text-center text-slate-500">Sin horas registradas.</td></tr>}</tbody></table></div></Card>
         </>}
       </div>
     );
@@ -609,7 +633,6 @@ export default function OEEApplication() {
                 <tr className="bg-slate-50 border-b border-slate-200 text-sm text-slate-600">
                   <th className="p-4 font-semibold">Lote</th><th className="p-4 font-semibold">Código OT</th><th className="p-4 font-semibold">Producto</th><th className="p-4 font-semibold">Línea/Máquina</th><th className="p-4 font-semibold">Planificado</th><th className="p-4 font-semibold">Vel. estándar</th><th className="p-4 font-semibold">Estado</th><th className="p-4 font-semibold">Registrador / Acción</th>
                 </tr>
-                {role === 'supervisor' && (
                   <tr className="border-b border-slate-200 bg-white">
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar lote" value={workOrderFilters.lot} onChange={(e) => updateFilter('lot', e.target.value)} /></th>
                     <th className="p-2"><input className="w-full rounded border border-slate-300 p-2 text-xs" placeholder="Filtrar código" value={workOrderFilters.code} onChange={(e) => updateFilter('code', e.target.value)} /></th>
@@ -620,7 +643,6 @@ export default function OEEApplication() {
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.status} onChange={(e) => updateFilter('status', e.target.value)}><option value="">Todos</option>{activeStatuses.map(status => <option key={status} value={status}>{WORK_ORDER_STATUS[status].label}</option>)}</select></th>
                     <th className="p-2"><select className="w-full rounded border border-slate-300 p-2 text-xs" value={workOrderFilters.registrar} onChange={(e) => updateFilter('registrar', e.target.value)}><option value="">Todos</option><option value="Sin registrador">Sin registrador</option>{productionLineOperators.map(operator => <option key={operator.id} value={operator.name}>{operator.name}</option>)}</select></th>
                   </tr>
-                )}
               </thead>
               <tbody>
                 {visibleWorkOrders.map((ot) => (
@@ -635,7 +657,7 @@ export default function OEEApplication() {
                         <div className="flex min-w-48 items-center gap-2"><span className="flex-1 text-sm font-medium text-slate-700">{ot.registrar || 'Sin registrador'}</span>{ot.status === 'in_progress' && <button title="Ver OEE en tiempo real" onClick={() => setSelectedLiveOrder(activeSession?.id === ot.id ? activeSession : ot)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Eye size={18}/></button>}</div>
                       ) : (
                         <Button variant="primary" className="!px-4 !py-2 text-sm" disabled={ot.status === 'in_progress' && ot.registrar !== currentUser.name} onClick={() => {
-                           setActiveSession({...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, productionRegistered: false, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || MACHINES.find(machine => machine.name === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
+                           setActiveSession({...ot, operator: currentUser.name, registrar: currentUser.name, shift: SHIFTS[0], realQty: 0, goodQty: 0, rejectQty: 0, reprocessQty: 0, wasteQty: 0, productionRegistered: false, losses: [], supportOperators: [], overweights: [], materialDiscards: [], targetWeight: '', standardSpeed: Number(ot.standardSpeed) || plantEquipment.find(machine => machine.name === ot.machine || machine.id === ot.machine)?.standardSpeed || 0, processStart: '00:00', processEnd: '00:00', performanceEndTime: ''});
                           setWorkOrders(current => current.map(order => order.id === ot.id ? { ...order, status: 'in_progress', registrar: currentUser.name } : order));
                           setCurrentView('active_production');
                         }}>{ot.status === 'in_progress' ? 'Continuar OEE' : 'Registrar OEE'} <ArrowRight size={16} /></Button>
@@ -1371,6 +1393,7 @@ export default function OEEApplication() {
 
   const AdministrationView = () => {
     const categoryLabels = { planned_availability: 'Detenciones planificadas', availability: 'Detenciones no planificadas', performance: 'Pérdidas de velocidad', quality: 'Rechazos de calidad' };
+    const productionLines = Array.from(new Set(plantEquipment.map(machine => machine.line).filter(Boolean))) as string[];
     const addCause = () => {
       const cause = adminNewCause.trim();
       if (!cause || lossCauses[adminLossCategory].some(item => item.toLowerCase() === cause.toLowerCase())) return;
@@ -1386,32 +1409,54 @@ export default function OEEApplication() {
       if (!window.confirm(`¿Quitar el motivo "${cause}" del listado?`)) return;
       setLossCauses(current => ({ ...current, [category]: current[category].filter(item => item !== cause) }));
     };
-    const addOperator = () => {
+    const saveOperator = () => {
       const name = adminOperatorForm.name.trim();
-      const machines = adminOperatorForm.machines.split(',').map(item => item.trim()).filter(Boolean);
+      const machines = adminOperatorForm.machines;
       if (!name || !machines.length) return;
-      setProductionLineOperators(current => [...current, { id: `OP-${Date.now().toString().slice(-6)}`, name, machines }]);
-      setAdminOperatorForm({ name: '', machines: '' });
+      setProductionLineOperators(current => adminEditingOperatorId
+        ? current.map(item => item.id === adminEditingOperatorId ? { ...item, name, machines } : item)
+        : [...current, { id: `OP-${Date.now().toString().slice(-6)}`, name, machines }]);
+      setAdminOperatorForm({ name: '', machines: [] });
+      setAdminEditingOperatorId('');
     };
     const editOperator = (operator) => {
-      const name = window.prompt('Nombre del operario:', operator.name)?.trim();
-      if (!name) return;
-      const machinesText = window.prompt('Máquinas o líneas separadas por coma. Use * para todas:', operator.machines.join(', '));
-      if (machinesText === null) return;
-      const machines = machinesText.split(',').map(item => item.trim()).filter(Boolean);
-      if (!machines.length) return;
-      setProductionLineOperators(current => current.map(item => item.id === operator.id ? { ...item, name, machines } : item));
+      const lines = (operator.machines.includes('*') ? ['*'] : Array.from(new Set(operator.machines.map(assignment => plantEquipment.find(machine => machine.id === assignment || machine.name === assignment)?.line || assignment)))) as string[];
+      setAdminOperatorForm({ name: operator.name, machines: lines });
+      setAdminEditingOperatorId(operator.id);
     };
     const removeOperator = (operator) => {
       if (!window.confirm(`¿Quitar a ${operator.name} del listado de operarios?`)) return;
       setProductionLineOperators(current => current.filter(item => item.id !== operator.id));
     };
+    const saveEquipment = () => {
+      const name = adminEquipmentForm.name.trim();
+      const line = adminEquipmentForm.line.trim();
+      if (!name || !line) return;
+      const standardSpeed = Number(adminEquipmentForm.standardSpeed) || 0;
+      setPlantEquipment(current => adminEditingEquipmentId
+        ? current.map(item => item.id === adminEditingEquipmentId ? { ...item, name, line, standardSpeed } : item)
+        : [...current, { id: `EQ-${Date.now().toString().slice(-6)}`, name, line, standardSpeed, status: 'available' }]);
+      setAdminEquipmentForm({ name: '', line: '', standardSpeed: '' });
+      setAdminEditingEquipmentId('');
+    };
+    const editEquipment = (equipment) => {
+      setAdminEquipmentForm({ name: equipment.name, line: equipment.line, standardSpeed: String(equipment.standardSpeed || '') });
+      setAdminEditingEquipmentId(equipment.id);
+    };
+    const removeEquipment = (equipment) => {
+      if (!window.confirm(`¿Quitar el equipo "${equipment.name}" de la planta?`)) return;
+      setPlantEquipment(current => current.filter(item => item.id !== equipment.id));
+    };
     return <div className="space-y-6 animate-in fade-in duration-300">
-      <div><h2 className="text-2xl font-bold text-slate-800">Administración</h2><p className="text-slate-500">Mantén actualizados los motivos operativos y el personal de las líneas de producción.</p></div>
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Base de motivos</h3><label className="mb-1 block text-sm font-semibold text-slate-600">Tipo de registro</label><select value={adminLossCategory} onChange={(event) => setAdminLossCategory(event.target.value)} className="mb-4 w-full rounded-lg border border-slate-300 p-3">{Object.entries(categoryLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select><div className="mb-4 flex gap-2"><input value={adminNewCause} onChange={(event) => setAdminNewCause(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addCause()} className="min-w-0 flex-1 rounded-lg border border-slate-300 p-3" placeholder="Nuevo motivo..."/><Button className="!px-4" disabled={!adminNewCause.trim()} onClick={addCause}><Plus size={17}/> Añadir</Button></div><div className="space-y-2">{lossCauses[adminLossCategory].map(cause => <div key={cause} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><span className="flex-1 text-sm font-medium">{cause}</span><button onClick={() => renameCause(adminLossCategory,cause)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeCause(adminLossCategory,cause)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>
-        <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Personal por línea</h3><div className="mb-4 grid min-w-0 gap-2 sm:grid-cols-2"><input value={adminOperatorForm.name} onChange={(event) => setAdminOperatorForm(current => ({...current,name:event.target.value}))} className="min-w-0 rounded-lg border border-slate-300 p-3" placeholder="Nombre del operario"/><input value={adminOperatorForm.machines} onChange={(event) => setAdminOperatorForm(current => ({...current,machines:event.target.value}))} className="min-w-0 rounded-lg border border-slate-300 p-3" placeholder="B-01, E-01 o *"/><Button className="w-full sm:col-span-2" disabled={!adminOperatorForm.name.trim() || !adminOperatorForm.machines.trim()} onClick={addOperator}><Plus size={17}/> Añadir operario</Button></div><p className="mb-4 text-xs text-slate-500">Separa varias máquinas o líneas con comas. Usa * para permitir acceso a todas.</p><div className="space-y-2">{productionLineOperators.map(operator => <div key={operator.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{operator.name}</p><p className="text-xs text-slate-500">{operator.machines.includes('*') ? 'Todas las líneas' : operator.machines.join(', ')}</p></div><button onClick={() => editOperator(operator)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeOperator(operator)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>
-      </div>
+      <div><h2 className="text-2xl font-bold text-slate-800">Administración</h2><p className="text-slate-500">Selecciona primero la base de datos que deseas mantener.</p></div>
+      <Card className="p-6"><label className="mb-2 block text-sm font-semibold text-slate-700">Área de edición</label><select value={adminSection} onChange={(event) => { setAdminSection(event.target.value); setAdminPlantSection(''); }} className="w-full rounded-lg border border-slate-300 bg-white p-3"><option value="">Seleccionar...</option><option value="stoppages">Detenciones</option><option value="plant">Planta</option></select></Card>
+      {!adminSection && <Card className="p-10 text-center text-slate-500">Selecciona “Detenciones” o “Planta” para mostrar sus herramientas de edición.</Card>}
+      {adminSection === 'stoppages' && <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Base de motivos de detención</h3><label className="mb-1 block text-sm font-semibold text-slate-600">Tipo de registro</label><select value={adminLossCategory} onChange={(event) => setAdminLossCategory(event.target.value)} className="mb-4 w-full rounded-lg border border-slate-300 p-3">{Object.entries(categoryLabels).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select><div className="mb-4 flex gap-2"><input value={adminNewCause} onChange={(event) => setAdminNewCause(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && addCause()} className="min-w-0 flex-1 rounded-lg border border-slate-300 p-3" placeholder="Nuevo motivo..."/><Button className="!px-4" disabled={!adminNewCause.trim()} onClick={addCause}><Plus size={17}/> Añadir</Button></div><div className="space-y-2">{lossCauses[adminLossCategory].map(cause => <div key={cause} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><span className="flex-1 text-sm font-medium">{cause}</span><button onClick={() => renameCause(adminLossCategory,cause)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeCause(adminLossCategory,cause)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>}
+      {adminSection === 'plant' && <><Card className="p-6"><label className="mb-2 block text-sm font-semibold text-slate-700">Herramienta de planta</label><select value={adminPlantSection} onChange={(event) => setAdminPlantSection(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white p-3"><option value="">Seleccionar...</option><option value="personnel">Personal por línea</option><option value="equipment">Equipo</option></select></Card>
+        {!adminPlantSection && <Card className="p-10 text-center text-slate-500">Selecciona “Personal por línea” o “Equipo”.</Card>}
+        {adminPlantSection === 'personnel' && <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Personal por línea</h3><div className="mb-4 grid min-w-0 gap-3 md:grid-cols-2"><input value={adminOperatorForm.name} onChange={(event) => setAdminOperatorForm(current => ({...current,name:event.target.value}))} className="min-w-0 rounded-lg border border-slate-300 p-3" placeholder="Nombre del operario"/><div><select multiple value={adminOperatorForm.machines} onChange={(event) => setAdminOperatorForm(current => ({ ...current, machines: Array.from(event.target.selectedOptions, option => option.value) }))} className="h-28 w-full rounded-lg border border-slate-300 bg-white p-2"><option value="*">Todas las líneas</option>{productionLines.map(line => <option key={line} value={line}>{line}</option>)}</select><p className="mt-1 text-xs text-slate-500">Mantén Ctrl presionado para seleccionar varias líneas.</p></div><div className="flex gap-2 md:col-span-2"><Button className="flex-1" disabled={!adminOperatorForm.name.trim() || !adminOperatorForm.machines.length} onClick={saveOperator}><Plus size={17}/> {adminEditingOperatorId ? 'Guardar cambios' : 'Añadir operario'}</Button>{adminEditingOperatorId && <Button variant="secondary" onClick={() => { setAdminEditingOperatorId(''); setAdminOperatorForm({ name: '', machines: [] }); }}>Cancelar</Button>}</div></div><div className="space-y-2">{productionLineOperators.map(operator => <div key={operator.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{operator.name}</p><p className="text-xs text-slate-500">{operator.machines.includes('*') ? 'Todas las líneas' : operator.machines.join(', ')}</p></div><button onClick={() => editOperator(operator)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeOperator(operator)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>}
+        {adminPlantSection === 'equipment' && <Card className="p-6"><h3 className="mb-4 text-lg font-bold text-slate-800">Equipos y líneas</h3><div className="mb-5 grid gap-3 md:grid-cols-3"><input value={adminEquipmentForm.name} onChange={(event) => setAdminEquipmentForm(current => ({ ...current, name: event.target.value }))} className="rounded-lg border border-slate-300 p-3" placeholder="Equipo (ej. Blistera B-01)"/><input value={adminEquipmentForm.line} onChange={(event) => setAdminEquipmentForm(current => ({ ...current, line: event.target.value }))} className="rounded-lg border border-slate-300 p-3" placeholder="Línea de producción"/><input type="number" min="0" value={adminEquipmentForm.standardSpeed} onChange={(event) => setAdminEquipmentForm(current => ({ ...current, standardSpeed: event.target.value }))} className="rounded-lg border border-slate-300 p-3" placeholder="Velocidad estándar"/><div className="flex gap-2 md:col-span-3"><Button className="flex-1" disabled={!adminEquipmentForm.name.trim() || !adminEquipmentForm.line.trim()} onClick={saveEquipment}><Plus size={17}/> {adminEditingEquipmentId ? 'Guardar cambios' : 'Añadir equipo'}</Button>{adminEditingEquipmentId && <Button variant="secondary" onClick={() => { setAdminEditingEquipmentId(''); setAdminEquipmentForm({ name: '', line: '', standardSpeed: '' }); }}>Cancelar</Button>}</div></div><div className="space-y-2">{plantEquipment.map(equipment => <div key={equipment.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3"><div className="min-w-0 flex-1"><p className="font-medium text-slate-800">{equipment.name}</p><p className="text-xs text-slate-500">{equipment.line} · {Number(equipment.standardSpeed || 0)} und/min</p></div><button onClick={() => editEquipment(equipment)} className="rounded p-2 text-blue-600 hover:bg-blue-50" title="Editar"><Edit size={17}/></button><button onClick={() => removeEquipment(equipment)} className="rounded p-2 text-rose-600 hover:bg-rose-50" title="Quitar"><Trash2 size={17}/></button></div>)}</div></Card>}
+      </>}
     </div>;
   };
 
