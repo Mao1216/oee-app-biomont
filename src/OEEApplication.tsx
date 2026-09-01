@@ -47,6 +47,21 @@ const elapsedMinutes = (start, end) => {
 
 const currentTimeInput = () => new Date().toTimeString().slice(0, 5);
 
+const addMinutesToTime = (time, minutesToAdd) => {
+  const base = timeToMinutes(time || '00:00');
+  const total = (base + minutesToAdd) % (24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+};
+
+const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+const getWeekKey = (dateText) => {
+  const date = new Date(`${dateText || new Date().toISOString().slice(0, 10)}T00:00:00`);
+  const start = new Date(date.getFullYear(), 0, 1);
+  const week = Math.ceil((((date.getTime() - start.getTime()) / 86400000) + start.getDay() + 1) / 7);
+  return `${date.getFullYear()}-S${String(week).padStart(2, '0')}`;
+};
+
 const DUMMY_USER = { name: "Carlos Mendoza", plant: "Planta Norte - Farma", id: "OP-042" };
 const SHIFTS = ["Mañana (06:00 - 14:00)", "Tarde (14:00 - 22:00)", "Noche (22:00 - 06:00)"];
 const INITIAL_SUPPORT_OPERATORS = [
@@ -81,6 +96,17 @@ const MACHINES = [
   { id: "M-01", name: "Mezcladora M-01", line: "Mezcladora", status: "available", standardSpeed: 70 },
   { id: "L-02", name: "Llenadora L-02", line: "Llenadora", status: "occupied", standardSpeed: 80 },
   { id: "A-01", name: "Acondicionadora A-01", line: "Acondicionadora", status: "available", standardSpeed: 95 },
+];
+
+const MATERIAL_PRODUCTS = [
+  { code: 'K1553', description: 'CAJA DE 20 X 20', unit: 'Unidad' },
+  { code: 'K155', description: 'CAJA DE 50', unit: 'Unidad' },
+  { code: 'ENV-001', description: 'Frasco PEAD', unit: 'unidades' },
+  { code: 'ENV-002', description: 'Tapa rosca de seguridad', unit: 'unidades' },
+  { code: 'ENV-003', description: 'Blíster PVC/Aluminio', unit: 'unidades' },
+  { code: 'ACO-001', description: 'Caja plegadiza', unit: 'unidades' },
+  { code: 'ACO-002', description: 'Inserto impreso', unit: 'unidades' },
+  { code: 'ACO-003', description: 'Etiqueta autoadhesiva', unit: 'unidades' },
 ];
 
 const LOSS_CAUSES = {
@@ -126,14 +152,498 @@ const Badge = ({ children, variant = 'default', className = '', ...props }: Reac
 };
 
 const Button = ({ children, variant = 'primary', className = '', type = 'button', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) => {
-  const baseStyle = "inline-flex items-center justify-center gap-2 px-6 py-ded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(2)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
-          </div></Card>
-          <div className="grid gap-6 xl:grid-cols-3"><Card className="p-6 xl:col-span-2"><div className="mb-5"><h3 className="font-bold text-slate-800">Desempeño por máquina</h3><p className="text-sm text-slate-500">OEE promedio y minutos de detención acumulados.</p></div><div className="h-72"><ResponsiveContainer><ComposedChart data={machineOverviewData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="machine" tick={{fontSize:10}}/><YAxis yAxisId="left" domain={[0,100]} unit="%"/><YAxis yAxisId="right" orientation="right" unit=" min"/><RechartsTooltip/><Legend/><Bar yAxisId="left" dataKey="oee" name="OEE" fill={COLORS.primary} radius={[6,6,0,0]}/><Line yAxisId="right" dataKey="downtime" name="Detención" stroke={COLORS.critical} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div></Card><Card className="p-6"><h3 className="font-bold text-slate-800">Estado de órdenes</h3><div className="mt-5 h-64"><ResponsiveContainer><PieChart><Pie data={orderStatusOverview} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={4}>{orderStatusOverview.map((_, index) => <Cell key={index} fill={[COLORS.primary,COLORS.success,COLORS.warning,COLORS.critical,'#8b5cf6'][index % 5]}/>)}</Pie><RechartsTooltip/><Legend/></PieChart></ResponsiveContainer></div></Card></div>
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <Card className="p-6"><h3 className="mb-5 font-bold text-slate-800">Pérdidas de disponibilidad reales</h3>{paretoData.length ? <div className="h-64"><ResponsiveContainer><BarChart data={paretoData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="cause" tick={{fontSize:10}}/><YAxis/><RechartsTooltip/><Bar dataKey="minutes" name="Minutos" fill={COLORS.critical}/></BarChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pérdidas registradas.</p>}</Card>
-            <Card className="p-6"><div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><h3 className="font-bold text-slate-800">Control de sobrepeso</h3><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardOverweightProduct} onChange={(event) => setDashboardOverweightProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div>{overweightData.length ? <div className="h-64"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="sequence" name="Registro"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Promedio"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">{dashboardOverweightProduct ? 'Sin pesos registrados para el producto.' : 'Selecciona un producto para ver los datos.'}</p>}</Card>
+  const baseStyle = "inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed";
+  const variants: Record<ButtonVariant, string> = {
+    primary: "bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 shadow-sm",
+    secondary: "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-slate-500",
+    danger: "bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-sm",
+    success: "bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500 shadow-sm",
+    ghost: "bg-transparent text-slate-600 hover:bg-slate-100"
+  };
+  return (
+    <button {...props} type={type} className={`${baseStyle} ${variants[variant]} ${className}`}>
+      {children}
+    </button>
+  );
+};
+
+const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+          <h3 className="text-lg font-bold text-slate-800">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TimeField = ({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) => {
+  const [hour = '00', minute = '00'] = (value || '00:00').split(':');
+  const update = (nextHour: string, nextMinute: string) => onChange(`${nextHour}:${nextMinute}`);
+  return (
+    <div className="min-w-44">
+      <label className="mb-1 block text-xs font-medium text-slate-400">{label}</label>
+      <div className="flex items-center gap-1 rounded-lg border border-slate-500 bg-white p-1 text-slate-900 shadow-inner">
+        <select aria-label={`${label}: hora`} value={hour} onChange={(event) => update(event.target.value, minute)} className="w-full rounded border-0 bg-transparent px-2 py-1.5 font-semibold outline-none">
+          {Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0')).map(option => <option key={option}>{option}</option>)}
+        </select>
+        <span className="font-bold text-slate-400">:</span>
+        <select aria-label={`${label}: minutos`} value={minute} onChange={(event) => update(hour, event.target.value)} className="w-full rounded border-0 bg-transparent px-2 py-1.5 font-semibold outline-none">
+          {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0')).map(option => <option key={option}>{option}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+};
+
+const RecordDetails = ({ record, metrics }: { record: any; metrics: any; readOnly?: boolean }) => {
+  if (!record || !metrics) return null;
+  const tickets = (record.losses || []).filter(loss => loss.ticketCode || loss.ticket);
+  return <div className="space-y-5"><div className="grid grid-cols-2 gap-4"><div><p className="text-xs text-slate-500">OT</p><p className="font-bold">{record.workOrderId || record.id}</p></div><div><p className="text-xs text-slate-500">Producto</p><p className="font-bold">{record.product}</p></div><div><p className="text-xs text-slate-500">Máquina</p><p className="font-semibold">{record.machine}</p></div><div><p className="text-xs text-slate-500">Operario</p><p className="font-semibold">{record.operator || 'Pendiente'}</p></div></div><div className="grid grid-cols-5 gap-2">{[['OEE',metrics.oee,'%'],['Disp.',metrics.a,'%'],['Vel. equipo',metrics.p,'%'],['Calidad',metrics.q,'%'],['TNI',metrics.tni,' min']].map(([label,value,unit]) => <div key={label} className="rounded-lg bg-slate-50 p-3 text-center"><p className="text-xs text-slate-500">{label}</p><p className="font-bold">{Number(value).toFixed(2)}{unit}</p></div>)}</div><div className="rounded-lg border border-slate-200 p-4 text-sm"><p><strong>Horario manual:</strong> {record.processStart || '--:--'} a {record.processEnd || '--:--'}</p><p className="mt-1"><strong>Producción:</strong> {Number(record.realQty || 0).toLocaleString()} und · <strong>Velocidad estándar:</strong> {Number(record.standardSpeed || 0)} und/min</p><p className="mt-1"><strong>Eventos:</strong> {(record.losses || []).length} · <strong>Sobrepesos:</strong> {(record.overweights || []).length} · <strong>Descartes:</strong> {(record.materialDiscards || []).length}</p></div>{tickets.length > 0 && <div><h4 className="mb-2 font-bold text-slate-800">Tickets de mantenimiento</h4><div className="space-y-2">{tickets.map(loss => <div key={loss.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"><p className="font-bold text-amber-900">{loss.ticketCode || loss.ticket?.code}</p><p className="mt-1 text-amber-800">{loss.cause} · Prioridad {loss.ticket?.priority || 'No indicada'}</p><p className="mt-1 text-slate-600">{loss.ticket?.detail || loss.comment || 'Sin detalle adicional'}</p><p className="mt-1 text-xs text-slate-500">Reportado por: {loss.ticket?.reportedBy || record.operator || 'Sin dato'}</p></div>)}</div></div>}</div>;
+};
+
+export default function OEEApplication() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [role, setRole] = useState(null); // 'supervisor', 'responsible_operator'
+  const [currentView, setCurrentView] = useState('dashboard');
+  const [loginRole, setLoginRole] = useState('');
+  const [loginOperatorId, setLoginOperatorId] = useState('OP-B01-003');
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
+  
+  // App Data State
+  const [records, setRecords] = useState(() => loadStoredCatalog('bioee-records', []));
+  const [workOrders, setWorkOrders] = useState(() => loadStoredCatalog('bioee-work-orders', []));
+  const [productionLineOperators, setProductionLineOperators] = useState(() => loadStoredCatalog('bioee-production-line-operators', PRODUCTION_LINE_OPERATORS));
+  const [plantEquipment, setPlantEquipment] = useState(() => loadStoredCatalog('bioee-plant-equipment-v2', MACHINES));
+  const [lossCauses, setLossCauses] = useState(() => loadStoredCatalog('bioee-loss-causes', LOSS_CAUSES));
+  const [adminSection, setAdminSection] = useState('');
+  const [adminPlantSection, setAdminPlantSection] = useState('');
+  const [adminLossCategory, setAdminLossCategory] = useState('availability');
+  const [adminNewCause, setAdminNewCause] = useState('');
+  const [adminOperatorForm, setAdminOperatorForm] = useState({ name: '', machines: [] as string[] });
+  const [adminEditingOperatorId, setAdminEditingOperatorId] = useState('');
+  const [adminEquipmentForm, setAdminEquipmentForm] = useState({ name: '', line: '', standardSpeed: '' });
+  const [adminEditingEquipmentId, setAdminEditingEquipmentId] = useState('');
+  const [importMessage, setImportMessage] = useState('');
+  const [workOrderFilters, setWorkOrderFilters] = useState({ code: '', lot: '', product: '', line: '', quantity: '', status: '', registrar: '' });
+  const workOrdersFileInputRef = useRef(null);
+  const [selectedLiveOrder, setSelectedLiveOrder] = useState(null);
+  const [dashboardOverweightProduct, setDashboardOverweightProduct] = useState('');
+  const [dashboardDiscardProduct, setDashboardDiscardProduct] = useState('');
+  const [dashboardDiscardType, setDashboardDiscardType] = useState('');
+  const [dashboardOeePeriod, setDashboardOeePeriod] = useState('month');
+  const [dashboardLaborLine, setDashboardLaborLine] = useState('');
+  const [dashboardLaborEquipment, setDashboardLaborEquipment] = useState('');
+  const [dashboardLot, setDashboardLot] = useState('');
+  const [dashboardOrder, setDashboardOrder] = useState('');
+  
+  // Active Operator Session State
+  const [activeSession, setActiveSession] = useState(() => loadStoredCatalog('bioee-active-session', null));
+
+  const currentUser = role === 'responsible_operator'
+    ? (productionLineOperators.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
+    : role ? DEMO_CREDENTIALS[role] : null;
+
+  useEffect(() => { window.localStorage.setItem('bioee-production-line-operators', JSON.stringify(productionLineOperators)); }, [productionLineOperators]);
+  useEffect(() => { window.localStorage.setItem('bioee-plant-equipment-v2', JSON.stringify(plantEquipment)); }, [plantEquipment]);
+  useEffect(() => { window.localStorage.setItem('bioee-loss-causes', JSON.stringify(lossCauses)); }, [lossCauses]);
+  useEffect(() => { window.localStorage.setItem('bioee-work-orders', JSON.stringify(workOrders)); }, [workOrders]);
+  useEffect(() => { window.localStorage.setItem('bioee-records', JSON.stringify(records)); }, [records]);
+  useEffect(() => {
+    if (activeSession) window.localStorage.setItem('bioee-active-session', JSON.stringify(activeSession));
+    else window.localStorage.removeItem('bioee-active-session');
+  }, [activeSession]);
+
+  const handleLogin = (event) => {
+    event.preventDefault();
+    if (!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)) return;
+    setRole(loginRole);
+    setIsLoggedIn(true);
+    setCurrentView(loginRole === 'responsible_operator' ? 'work_orders' : 'dashboard');
+  };
+
+  const logout = () => {
+    setIsLoggedIn(false);
+    setRole(null);
+  };
+
+  const getImportValue = (row, aliases) => {
+    const normalizedAliases = aliases.map(alias => alias.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const entry = Object.entries(row).find(([key]) =>
+      normalizedAliases.includes(String(key).toLowerCase().replace(/[^a-z0-9]/g, ''))
+    );
+    return entry ? entry[1] : '';
+  };
+
+  const parsePlannedQuantity = (value) => {
+    if (typeof value === 'number') return value;
+    const text = String(value ?? '').trim();
+    if (!text) return 0;
+    const normalized = text.includes(',')
+      ? text.replace(/\./g, '').replace(',', '.')
+      : text.replace(/[^0-9.-]/g, '');
+    return Number(normalized) || 0;
+  };
+
+  const handleWorkOrdersImport = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+
+      const importedOrders = rows.map((row, index) => {
+        const id = String(getImportValue(row, ['Código OT', 'Codigo OT', 'OT', 'Orden', 'Orden de trabajo', 'ID'])).trim();
+        const statusText = String(getImportValue(row, ['Estado', 'Status'])).toLowerCase();
+        return {
+          id,
+          lot: String(getImportValue(row, ['Lote', 'Número de lote', 'Numero de lote', 'Lot'])).trim() || 'Sin lote',
+          product: String(getImportValue(row, ['Producto', 'Descripción', 'Descripcion', 'Material'])).trim() || 'Sin producto',
+          line: String(getImportValue(row, ['Línea', 'Linea', 'Línea/Máquina', 'Linea/Maquina'])).trim() || 'Sin línea',
+          machine: String(getImportValue(row, ['Máquina', 'Maquina', 'Equipo'])).trim() || 'Sin máquina',
+          plannedQty: parsePlannedQuantity(getImportValue(row, ['Planificado', 'Cantidad planificada', 'Cantidad', 'Qty'])),
+          standardSpeed: parsePlannedQuantity(getImportValue(row, ['Velocidad estándar', 'Velocidad estandar', 'Velocidad estándar (und/min)', 'Velocidad', 'Standard speed'])),
+          plannedWorkerHours: parsePlannedQuantity(getImportValue(row, ['Horas planificadas del operario', 'Horas planificadas', 'Horas operario', 'Planned worker hours'])),
+          status: 'not_started',
+          registrar: '',
+          date: String(getImportValue(row, ['Fecha', 'Fecha OT', 'Date'])).trim()
+        };
+      }).filter(order => order.id);
+
+      if (!importedOrders.length) {
+        throw new Error('El archivo no contiene filas de órdenes de trabajo.');
+      }
+
+      setWorkOrders(importedOrders);
+      setImportMessage(`${importedOrders.length} orden(es) de trabajo cargada(s) desde ${file.name}.`);
+    } catch (error) {
+      setImportMessage('No se pudo leer el Excel. Verifica que la primera hoja incluya el listado de OT.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const downloadWorkOrderTemplate = () => {
+    const worksheet = XLSX.utils.json_to_sheet([{
+      Lote: '', 'Código OT': '', Producto: '', Línea: '', Máquina: '', 'Cantidad planificada': '',
+      'Velocidad estándar (und/min)': ''
+    }]);
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 18 }, { wch: 32 }, { wch: 24 }, { wch: 24 }, { wch: 22 }, { wch: 30 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Ordenes OT');
+    XLSX.writeFile(workbook, 'Plantilla_Ordenes_OT_Biomont.xlsx');
+  };
+
+  // Helper to calculate active session OEE
+  const calculateSessionMetrics = (session) => {
+    if (!session) return { a: 0, p: 0, q: 0, oee: 0 };
+    const losses = Array.isArray(session.losses) ? session.losses : [];
+    const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
+    const tni = losses.filter(loss => loss.category === 'planned_availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const plannedTimeMin = Math.max(0, processMinutes - tni);
+    const availLoss = losses.filter(loss => loss.category === 'availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const perfLoss = losses.filter(loss => loss.category === 'performance').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const operatingTime = Math.max(0, plannedTimeMin - availLoss);
+    const availability = plannedTimeMin > 0 ? (operatingTime / plannedTimeMin) * 100 : 0;
+    const standardSpeed = Number(session.standardSpeed) || 0;
+    const theoreticalProduction = operatingTime * standardSpeed;
+    const reportedSpeed = operatingTime > 0 ? Number(session.realQty || 0) / operatingTime : 0;
+    const effectiveSpeed = reportedSpeed;
+    const performance = theoreticalProduction > 0 ? (Number(session.realQty || 0) / theoreticalProduction) * 100 : 0;
+    const goodQty = Math.max(0, Number(session.realQty) - Number(session.rejectQty || 0));
+    const quality = session.realQty > 0 ? (goodQty / session.realQty) * 100 : 0;
+    const oee = (availability/100) * (performance/100) * (quality/100) * 100;
+
+    return {
+      a: Math.max(0, Math.min(100, availability)),
+      p: Math.max(0, performance),
+      q: Math.max(0, Math.min(100, quality)),
+      oee: Math.max(0, Math.min(100, oee)),
+      operatingTime,
+      availLoss,
+      microStopMinutes: perfLoss,
+      standardSpeed,
+      reportedSpeed,
+      effectiveSpeed,
+      processMinutes,
+      plannedTimeMin,
+      theoreticalProduction,
+      tni
+    };
+  };
+
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl overflow-hidden">
+          <div className="p-8 bg-blue-600 text-center">
+            <BiomontLogo className="w-52 h-auto mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-white">BIOEE</h1>
+            <p className="text-blue-100 mt-2">Sistema de Gestión y Medición de OEE</p>
           </div>
-          <Card className="p-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><h3 className="font-bold text-slate-800">Descarte de materiales para planificación</h3><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardDiscardProduct} onChange={(event) => setDashboardDiscardProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div><div className="mt-4 grid gap-3 md:grid-cols-2">{Object.keys(materialSummary).length ? Object.entries(materialSummary).map(([key, quantity]) => { const [type, unit] = key.split('|'); return <div key={key} className="rounded-lg border border-slate-200 p-4"><p className="text-sm text-slate-500">Material de {type.toLowerCase()}</p><p className="text-2xl font-bold text-slate-800">{Number(quantity).toLocaleString()} <span className="text-sm font-medium">{unit}</span></p></div>; }) : <p className="text-slate-500">{dashboardDiscardProduct ? 'Sin descartes registrados para el producto.' : 'Selecciona un producto para ver los datos.'}</p>}</div></Card>
+          <form className="p-8 space-y-5" onSubmit={handleLogin}>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Perfil de acceso</label>
+              <select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => setLoginRole(event.target.value)}>
+                <option value="">Selecciona un perfil</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="responsible_operator">Operario responsable</option>
+              </select>
+            </div>
+            {loginRole === 'responsible_operator' && <div><label className="block text-sm font-semibold text-slate-700 mb-2">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{productionLineOperators.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
+            <Button className="w-full !py-3" type="submit" disabled={!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)}><User size={18} /> Ingresar</Button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  const SidebarItem = ({ icon: Icon, label, viewId, requiredRole }: { icon: React.ElementType; label: string; viewId: string; requiredRole?: string }) => {
+    if (requiredRole && requiredRole !== role && role !== 'admin') return null;
+    const isActive = currentView === viewId;
+    return (
+      <button
+        onClick={() => setCurrentView(viewId)}
+        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+          isActive ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+        }`}
+      >
+        <Icon size={20} />
+        {isSidebarOpen && <span>{label}</span>}
+      </button>
+    );
+  };
+
+  const LegacyDashboardView = () => (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Dashboard de Planta</h2>
+          <p className="text-slate-500">Resumen de indicadores OEE - Planta Norte</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" className="!py-2">Hoy</Button>
+          <Button variant="secondary" className="!py-2">Esta Semana</Button>
+          <Button variant="secondary" className="!py-2"><Filter size={16} /> Filtros</Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card className="p-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10"><Activity size={64} /></div>
+          <p className="text-sm font-medium text-slate-500 mb-1">OEE Global Actual</p>
+          <div className="flex items-end gap-3">
+            <h3 className="text-4xl font-bold text-amber-500">76.4%</h3>
+            <span className="text-sm font-medium text-rose-500 mb-1">▼ 2.1%</span>
+          </div>
+          <div className="mt-4 w-full bg-slate-100 rounded-full h-2">
+            <div className="bg-amber-500 h-2 rounded-full" style={{ width: '76.4%' }}></div>
+          </div>
+          <p className="text-xs text-slate-500 mt-2">Objetivo: 85%</p>
+        </Card>
+        
+        <Card className="p-6">
+          <p className="text-sm font-medium text-slate-500 mb-1">Disponibilidad</p>
+          <h3 className="text-3xl font-bold text-slate-800">88.2%</h3>
+          <div className="mt-4 flex justify-between text-xs text-slate-500 border-t pt-2">
+            <span>T. Planificado: 480m</span>
+            <span>T. Operativo: 423m</span>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <p className="text-sm font-medium text-slate-500 mb-1">Velocidad de equipo</p>
+          <h3 className="text-3xl font-bold text-slate-800">89.5%</h3>
+          <div className="mt-4 flex justify-between text-xs text-slate-500 border-t pt-2">
+            <span>Vel. Ideal: 100/m</span>
+            <span>Vel. Real: 89/m</span>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <p className="text-sm font-medium text-slate-500 mb-1">Calidad</p>
+          <h3 className="text-3xl font-bold text-emerald-500">96.8%</h3>
+          <div className="mt-4 flex justify-between text-xs text-slate-500 border-t pt-2">
+            <span>Producido: 37.8k</span>
+            <span className="text-rose-500">Rechazo: 1.2k</span>
+          </div>
+        </Card>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="p-6 lg:col-span-2">
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Tendencia OEE (Últimos 7 días)</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={CHART_DATA_TREND}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
+                <YAxis domain={[60, 100]} axisLine={false} tickLine={false} tick={{fill: '#64748b'}} />
+                <RechartsTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                <Legend />
+                <Line type="monotone" dataKey="oee" name="OEE" stroke={COLORS.primary} strokeWidth={3} dot={{r: 4}} activeDot={{r: 6}} />
+                <Line type="monotone" dataKey="a" name="Disp." stroke={COLORS.warning} strokeWidth={2} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="p" name="Rend." stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="q" name="Calidad" stroke={COLORS.success} strokeWidth={2} strokeDasharray="5 5" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Pareto de Pérdidas (Minutos)</h3>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={CHART_DATA_PARETO} margin={{top: 20, right: 20, bottom: 20, left: 0}}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="cause" scale="band" tick={{fontSize: 10, fill: '#64748b'}} interval={0} angle={-45} textAnchor="end" />
+                <YAxis yAxisId="left" tick={{fontSize: 12}} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{fontSize: 12}} tickFormatter={(v)=>`${v}%`} />
+                <RechartsTooltip />
+                <Bar yAxisId="left" dataKey="minutes" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#0f172a" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+
+  const DashboardView = () => {
+    const liveRecord = activeSession ? { ...activeSession, id: `LIVE-${activeSession.id}`, date: new Date().toISOString().slice(0, 10), metrics: calculateSessionMetrics(activeSession), status: 'in_progress' } : null;
+    const allSourceRecords = [...records, ...(liveRecord ? [liveRecord] : [])];
+    const dashboardLots = Array.from(new Set(allSourceRecords.map(record => record.lot).filter(Boolean))).sort();
+    const dashboardOrders = dashboardLot ? Array.from(new Set(allSourceRecords.filter(record => record.lot === dashboardLot).map(record => record.workOrderId || String(record.id).replace(/^LIVE-|^REC-/, '')).filter(Boolean))).sort() : [];
+    const sourceRecords = allSourceRecords.filter(record => (!dashboardLot || record.lot === dashboardLot) && (!dashboardOrder || (record.workOrderId || String(record.id).replace(/^LIVE-|^REC-/, '')) === dashboardOrder)).map(record => ({ ...record, metrics: calculateSessionMetrics(record) }));
+    const products = Array.from(new Set(sourceRecords.map(record => record.product).filter(Boolean)));
+    const productFilteredRecords = dashboardDiscardProduct ? sourceRecords.filter(record => record.product === dashboardDiscardProduct) : [];
+    const discardFilteredRecords = dashboardDiscardType ? productFilteredRecords : [];
+    const materialSummary = productFilteredRecords.flatMap(record => record.materialDiscards || []).reduce((summary, item) => {
+      const key = `${item.type}|${item.unit}`;
+      summary[key] = (summary[key] || 0) + Number(item.quantity || 0);
+      return summary;
+    }, {});
+    const lossMap = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability' || loss.category === 'planned_availability').reduce((map, loss) => {
+      map[loss.cause] = (map[loss.cause] || 0) + Number(loss.duration || 0);
+      return map;
+    }, {});
+    const sortedLosses = Object.entries(lossMap).map(([cause, minutes]) => ({ cause, minutes: Number(minutes) })).sort((first, second) => second.minutes - first.minutes);
+    const totalParetoMinutes = sortedLosses.reduce((sum, item) => sum + item.minutes, 0);
+    let cumulativeMinutes = 0;
+    const paretoData = sortedLosses.map(item => {
+      cumulativeMinutes += item.minutes;
+      return { ...item, cumulative: totalParetoMinutes ? (cumulativeMinutes / totalParetoMinutes) * 100 : 0 };
+    });
+    const overweightData = dashboardOverweightProduct ? sourceRecords.filter(record => record.product === dashboardOverweightProduct).flatMap(record => (record.overweights || []).map((item, index) => ({
+      time: item.time || addMinutesToTime(record.processStart || '00:00', (index + 1) * 30), weight: Number(item.weight), quantity: Number(item.quantity), product: record.product
+    }))).sort((first, second) => timeToMinutes(first.time) - timeToMinutes(second.time)) : [];
+    const configuredTarget = dashboardOverweightProduct ? sourceRecords.find(record => record.product === dashboardOverweightProduct && Number(record.targetWeight) > 0)?.targetWeight : 0;
+    const centralWeight = Number(configuredTarget) || (overweightData.length ? overweightData.reduce((sum, item) => sum + item.weight * item.quantity, 0) / overweightData.reduce((sum, item) => sum + item.quantity, 0) : 0);
+    const upperWeightTolerance = centralWeight + 0.5;
+    const lowerWeightTolerance = centralWeight - 0.5;
+    const discardMonthlyData = monthLabels.map((month, monthIndex) => ({
+      month,
+      quantity: discardFilteredRecords.reduce((sum, record) => sum + (record.materialDiscards || []).filter(item => item.type === dashboardDiscardType && new Date(`${item.date || record.date || new Date().toISOString().slice(0, 10)}T00:00:00`).getMonth() === monthIndex).reduce((itemSum, item) => itemSum + Number(item.quantity || 0), 0), 0)
+    }));
+    const temporalGroups = sourceRecords.reduce((summary, record) => {
+      const dateText = record.date || new Date().toISOString().slice(0, 10);
+      const date = new Date(`${dateText}T00:00:00`);
+      const key = dashboardOeePeriod === 'month' ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` : dashboardOeePeriod === 'week' ? getWeekKey(dateText) : dateText;
+      const label = dashboardOeePeriod === 'month' ? `${monthLabels[date.getMonth()]} ${date.getFullYear()}` : dashboardOeePeriod === 'week' ? key.replace('-', ' · ') : date.toLocaleDateString('es-PE', { day: '2-digit', month: 'short' });
+      const weight = Number(record.metrics?.plannedTimeMin || 0) || 1;
+      if (!summary[key]) summary[key] = { key, label, weightedOee: 0, weight: 0 };
+      summary[key].weightedOee += Number(record.metrics?.oee || 0) * weight;
+      summary[key].weight += weight;
+      return summary;
+    }, {});
+    const temporalOeeData = Object.values(temporalGroups).sort((first: any, second: any) => first.key.localeCompare(second.key)).map((item: any) => ({ period: item.label, oee: item.weight ? item.weightedOee / item.weight : 0 }));
+    const laborByLocation = sourceRecords.reduce((summary: Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>, record) => {
+      const addHours = (worker, hours, participation) => {
+        if (!worker || Number(hours) <= 0) return;
+        const line = record.line || 'Sin línea';
+        const machine = record.machine || 'Sin equipo';
+        const key = `${worker}|${line}|${machine}|${participation}`;
+        if (!summary[key]) summary[key] = { worker, line, machine, participation, hours: 0 };
+        summary[key].hours += Number(hours);
+      };
+      addHours(record.operator || record.registrar, elapsedMinutes(record.processStart, record.processEnd) / 60, 'Registrador');
+      (record.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || 0, 'Apoyo de proceso'));
+      (record.losses || []).filter(loss => loss.category === 'planned_availability').forEach(loss => (loss.supportOperators || []).forEach(operator => addHours(operator.name, Number(operator.hours) || Number(loss.duration || 0) / 60, 'Apoyo en detención')));
+      return summary;
+    }, {} as Record<string, { worker: string; line: string; machine: string; participation: string; hours: number }>);
+    const laborLocationData = Object.values(laborByLocation) as Array<{ worker: string; line: string; machine: string; participation: string; hours: number }>;
+    const laborLines = Array.from(new Set(laborLocationData.map(item => item.line))).sort();
+    const laborEquipment = dashboardLaborLine ? Array.from(new Set(laborLocationData.filter(item => item.line === dashboardLaborLine).map(item => item.machine))).sort() : [];
+    const laborRanking = dashboardLaborLine && dashboardLaborEquipment ? Object.values(laborLocationData.filter(item => item.line === dashboardLaborLine && item.machine === dashboardLaborEquipment).reduce((summary: Record<string, { worker: string; line: string; machine: string; participations: string[]; hours: number }>, item) => {
+      if (!summary[item.worker]) summary[item.worker] = { worker: item.worker, line: item.line, machine: item.machine, participations: [], hours: 0 };
+      summary[item.worker].hours += item.hours;
+      if (!summary[item.worker].participations.includes(item.participation)) summary[item.worker].participations.push(item.participation);
+      return summary;
+    }, {})).sort((first, second) => second.hours - first.hours) : [];
+    const totalShiftMinutes = sourceRecords.reduce((sum, record) => sum + elapsedMinutes(record.processStart, record.processEnd), 0);
+    const totalTni = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'planned_availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const plannedMinutes = Math.max(0, totalShiftMinutes - totalTni);
+    const totalDowntime = sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+    const operatingMinutes = Math.max(0, plannedMinutes - totalDowntime);
+    const totalProduction = sourceRecords.reduce((sum, record) => sum + Number(record.realQty || 0), 0);
+    const theoreticalProduction = sourceRecords.reduce((sum, record) => {
+      const recordMinutes = Math.max(0, elapsedMinutes(record.processStart, record.processEnd) - (record.losses || []).filter(loss => ['planned_availability', 'availability'].includes(loss.category)).reduce((lossSum, loss) => lossSum + Number(loss.duration || 0), 0));
+      return sum + recordMinutes * Number(record.standardSpeed || 0);
+    }, 0);
+    const goodProduction = sourceRecords.reduce((sum, record) => sum + Math.max(0, Number(record.realQty || 0) - Number(record.rejectQty || 0)), 0);
+    const availabilityRate = plannedMinutes ? operatingMinutes / plannedMinutes : 0;
+    const performanceRate = theoreticalProduction ? totalProduction / theoreticalProduction : 0;
+    const qualityRate = totalProduction ? goodProduction / totalProduction : 0;
+    const leanOee = availabilityRate * performanceRate * qualityRate;
+    const weightedOeeBase = sourceRecords.reduce((sum, record) => sum + Number(record.metrics?.plannedTimeMin || 0), 0);
+    const consolidatedOee = weightedOeeBase > 0
+      ? sourceRecords.reduce((sum, record) => sum + Number(record.metrics?.oee || 0) * Number(record.metrics?.plannedTimeMin || 0), 0) / weightedOeeBase
+      : Math.max(0, Math.min(100, leanOee * 100));
+    const boundedPercent = value => Math.max(0, Math.min(100, value * 100));
+    const equipmentSpeedPercent = Math.max(0, performanceRate * 100);
+    const productionDifference = totalProduction - theoreticalProduction;
+    const machineSummary = sourceRecords.reduce((summary, record) => {
+      const machine = record.machine || 'Sin máquina';
+      if (!summary[machine]) summary[machine] = { machine, orders: 0, downtime: 0, oeeTotal: 0 };
+      summary[machine].orders += 1;
+      summary[machine].oeeTotal += Number(record.metrics?.oee || 0);
+      summary[machine].downtime += (record.losses || []).filter(loss => loss.category === 'availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
+      return summary;
+    }, {});
+    const machineOverviewData = Object.values(machineSummary).map((item: any) => ({ ...item, oee: item.orders ? item.oeeTotal / item.orders : 0 }));
+    const orderStatusOverview = Object.entries(WORK_ORDER_STATUS).map(([status, config]) => ({ name: config.label, value: workOrders.filter(order => order.status === status).length })).filter(item => item.value > 0);
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 p-7 text-white shadow-xl"><div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-200">Centro de control · BIOEE</p><h2 className="mt-3 text-4xl font-bold">Dashboard</h2></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold text-blue-100">Lote</label><select className="min-w-56 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900" value={dashboardLot} onChange={(event) => { setDashboardLot(event.target.value); setDashboardOrder(''); }}><option value="">Todos los lotes</option>{dashboardLots.map(lot => <option key={lot}>{lot}</option>)}</select></div><div><label className="mb-1 block text-xs font-semibold text-blue-100">Orden de trabajo</label><select disabled={!dashboardLot} className="min-w-56 rounded-lg border border-white/20 bg-white p-2.5 text-slate-900 disabled:bg-slate-200 disabled:text-slate-500" value={dashboardOrder} onChange={(event) => setDashboardOrder(event.target.value)}><option value="">{dashboardLot ? 'Todas las OT' : 'Selecciona un lote'}</option>{dashboardOrders.map(order => <option key={order}>{order}</option>)}</select></div></div></div></div>
+        {allSourceRecords.length === 0 ? <Card className="p-12 text-center"><Activity className="mx-auto mb-3 text-slate-300" size={48}/><h3 className="font-bold text-slate-700">Aún no hay datos productivos</h3><p className="mt-1 text-slate-500">Carga una plantilla de OT y registra una OEE para alimentar este dashboard.</p></Card> : sourceRecords.length === 0 ? <Card className="p-12 text-center"><Search className="mx-auto mb-3 text-slate-300" size={44}/><h3 className="font-bold text-slate-700">Sin datos para esta selección</h3><p className="mt-1 text-slate-500">Selecciona otro lote u orden de trabajo.</p></Card> : <>
+          <Card className="p-6"><div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Descomposición Lean</p><h3 className="mt-1 text-xl font-bold text-slate-900">Cómo se construye el OEE</h3><p className="text-sm text-slate-500">Del tiempo programado hasta las unidades buenas a la primera.</p></div><div className="rounded-xl bg-slate-950 px-5 py-3 text-white"><p className="text-xs uppercase tracking-wider text-slate-400">OEE consolidado</p><p className="text-3xl font-bold">{consolidatedOee.toFixed(2)}%</p><p className="mt-1 text-[10px] text-slate-400">Ponderado por tiempo programado</p></div></div><div className="space-y-4">
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Tiempo programado</p><p className="text-xs text-slate-500">Turno menos TNI</p></div><div className="h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex h-full w-full items-center justify-center bg-amber-300 px-3 text-sm font-bold text-amber-950">{(plannedMinutes/60).toFixed(2)} horas</div></div><div className="text-right"><p className="text-sm font-semibold text-slate-600">100%</p><p className="text-xs text-slate-500">TNI: {totalTni.toFixed(2)} min</p></div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Disponibilidad</p><p className="text-xs text-slate-500">Tiempo productivo</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-cyan-500 px-2 text-sm font-bold text-white" style={{width:`${boundedPercent(availabilityRate)}%`}}>{operatingMinutes ? `${(operatingMinutes/60).toFixed(2)} h` : ''}</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Pérdida {totalDowntime.toFixed(0)} min</div></div><div className="text-right"><p className="font-bold text-cyan-700">{boundedPercent(availabilityRate).toFixed(2)}%</p><p className="text-xs text-slate-500">Productivo / Programado</p></div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_150px] md:items-center"><div><p className="font-bold text-slate-800">Velocidad de equipo</p><p className="text-xs text-slate-500">Real ÷ capacidad teórica</p></div><div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-orange-400 px-2 text-sm font-bold text-orange-950" style={{width:`${boundedPercent(performanceRate)}%`}}>{totalProduction.toLocaleString()} und reales</div><div className={`flex flex-1 items-center justify-center px-2 text-xs font-semibold text-white ${productionDifference >= 0 ? 'bg-emerald-600' : 'bg-rose-500'}`}>{productionDifference >= 0 ? `Sobre estándar +${productionDifference.toLocaleString()} und` : `Pérdida ${Math.abs(productionDifference).toLocaleString()} und`}</div></div><p className="mt-1 text-xs text-slate-500">Capacidad teórica: {theoreticalProduction.toLocaleString()} und = tiempo operativo × velocidad estándar</p></div><div className="text-right"><p className="font-bold text-orange-600">{equipmentSpeedPercent.toFixed(2)}%</p><p className="text-xs text-slate-500">{totalProduction.toLocaleString()} ÷ {theoreticalProduction.toLocaleString()}</p></div></div>
+            <div className="grid gap-2 md:grid-cols-[180px_1fr_130px] md:items-center"><div><p className="font-bold text-slate-800">Calidad</p><p className="text-xs text-slate-500">Buenas a la primera</p></div><div className="flex h-12 overflow-hidden rounded-lg bg-slate-100"><div className="flex items-center justify-center bg-lime-500 px-2 text-sm font-bold text-lime-950" style={{width:`${boundedPercent(qualityRate)}%`}}>{goodProduction.toLocaleString()} buenas</div><div className="flex flex-1 items-center justify-center bg-rose-500 px-2 text-xs font-semibold text-white">Rechazos {Math.max(0,totalProduction-goodProduction).toLocaleString()}</div></div><div className="text-right"><p className="font-bold text-lime-700">{boundedPercent(qualityRate).toFixed(2)}%</p><p className="text-xs text-slate-500">Buenas / Total</p></div></div>
+          </div></Card>
+          <Card className="p-6"><div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h3 className="font-bold text-slate-800">Evolución del OEE global</h3><p className="text-sm text-slate-500">Un único gráfico para consultar el consolidado mensual, semanal o diario.</p></div><div><label className="mb-1 block text-xs font-semibold text-slate-500">Nivel de consolidación</label><select className="min-w-52 rounded-lg border border-slate-300 bg-white p-2" value={dashboardOeePeriod} onChange={(event) => setDashboardOeePeriod(event.target.value)}><option value="month">Mensual</option><option value="week">Semanal</option><option value="day">Diario</option></select></div></div><div className="h-72"><ResponsiveContainer><LineChart data={temporalOeeData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="period" tick={{fontSize:11}}/><YAxis domain={[0,100]} unit="%"/><RechartsTooltip formatter={(value) => [`${Number(value).toFixed(2)}%`, 'OEE global']}/><Line type="monotone" dataKey="oee" name="OEE global" stroke={COLORS.primary} strokeWidth={3} dot={{r:5}} activeDot={{r:7}}/></LineChart></ResponsiveContainer></div></Card>
+          <Card className="p-6"><h3 className="font-bold text-slate-800">Árbol de pérdidas</h3><p className="mb-5 text-sm text-slate-500">Descomposición de las pérdidas que explican la reducción del OEE.</p><div className="flex flex-col items-center"><div className="rounded-xl bg-slate-900 px-6 py-3 text-center text-white"><p className="text-xs text-slate-300">Tiempo total del proceso</p><p className="text-xl font-bold">{totalShiftMinutes.toFixed(0)} min</p></div><div className="h-6 w-px bg-slate-300"/><div className="grid w-full gap-4 md:grid-cols-4"><div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-center"><p className="font-bold text-sky-800">TNI planificado</p><p className="text-2xl font-bold text-sky-700">{totalTni.toFixed(0)} min</p><p className="text-xs text-sky-600">Limpieza, cambio y mantenimiento</p></div><div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center"><p className="font-bold text-rose-800">No planificadas</p><p className="text-2xl font-bold text-rose-700">{totalDowntime.toFixed(0)} min</p><p className="text-xs text-rose-600">Averías, bloqueos y servicios</p></div><div className="rounded-xl border border-purple-200 bg-purple-50 p-4 text-center"><p className="font-bold text-purple-800">Velocidad</p><p className="text-2xl font-bold text-purple-700">{sourceRecords.flatMap(record => record.losses || []).filter(loss => loss.category === 'performance').length}</p><p className="text-xs text-purple-600">Eventos cualitativos reportados</p></div><div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center"><p className="font-bold text-amber-800">Calidad</p><p className="text-2xl font-bold text-amber-700">{Math.max(0,totalProduction-goodProduction).toLocaleString()} und</p><p className="text-xs text-amber-600">Reproceso y desperdicio</p></div></div></div></Card>
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card className="p-6"><h3 className="mb-1 font-bold text-slate-800">Pareto de pérdidas de disponibilidad</h3><p className="mb-5 text-sm text-slate-500">Causas ordenadas de mayor a menor y porcentaje acumulado.</p>{paretoData.length ? <div className="h-72"><ResponsiveContainer><ComposedChart data={paretoData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="cause" tick={{fontSize:10}}/><YAxis yAxisId="minutes"/><YAxis yAxisId="percent" orientation="right" domain={[0,100]} unit="%"/><RechartsTooltip/><Legend/><Bar yAxisId="minutes" dataKey="minutes" name="Minutos" fill={COLORS.critical} radius={[5,5,0,0]}/><Line yAxisId="percent" type="monotone" dataKey="cumulative" name="% acumulado" stroke={COLORS.primary} strokeWidth={3}/></ComposedChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Sin pérdidas registradas.</p>}</Card>
+            <Card className="p-6"><div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h3 className="font-bold text-slate-800">Control de sobrepeso</h3><p className="text-sm text-slate-500">Tolerancia: peso objetivo ± 0.5 g.</p></div><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardOverweightProduct} onChange={(event) => setDashboardOverweightProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div></div>{overweightData.length ? <div className="h-72"><ResponsiveContainer><ScatterChart><CartesianGrid/><XAxis type="category" dataKey="time" name="Hora"/><YAxis type="number" dataKey="weight" name="Peso" unit=" g" domain={['auto','auto']}/><RechartsTooltip cursor={{strokeDasharray:'3 3'}}/><ReferenceLine y={upperWeightTolerance} stroke={COLORS.critical} strokeDasharray="6 4" label="+0.5"/><ReferenceLine y={centralWeight} stroke={COLORS.primary} strokeWidth={2} label="Objetivo"/><ReferenceLine y={lowerWeightTolerance} stroke={COLORS.critical} strokeDasharray="6 4" label="-0.5"/><Scatter data={overweightData} fill={COLORS.warning}/></ScatterChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">{dashboardOverweightProduct ? 'Sin pesos registrados para el producto.' : 'Selecciona un producto para ver los datos.'}</p>}</Card>
+          </div>
+          <Card className="p-6"><div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><h3 className="font-bold text-slate-800">Descarte de materiales por mes</h3><p className="text-sm text-slate-500">Una sola serie de barras filtrada por producto y tipo de descarte.</p></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold text-slate-500">Producto</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardDiscardProduct} onChange={(event) => setDashboardDiscardProduct(event.target.value)}><option value="" disabled>Selecciona producto</option>{products.map(product => <option key={product}>{product}</option>)}</select></div><div><label className="mb-1 block text-xs font-semibold text-slate-500">Tipo de descarte</label><select className="min-w-48 rounded-lg border border-slate-300 bg-white p-2" value={dashboardDiscardType} onChange={(event) => setDashboardDiscardType(event.target.value)}><option value="" disabled>Selecciona tipo</option><option>Envasado</option><option>Acondicionado</option></select></div></div></div>{dashboardDiscardProduct && dashboardDiscardType ? <div className="mt-5 h-72"><ResponsiveContainer><BarChart data={discardMonthlyData}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="month"/><YAxis/><RechartsTooltip/><Bar dataKey="quantity" name="Cantidad descartada" fill={COLORS.warning} radius={[6,6,0,0]}/></BarChart></ResponsiveContainer></div> : <p className="py-16 text-center text-slate-500">Selecciona un producto y un tipo de descarte para ver los datos.</p>}</Card>
           <Card className="p-6"><div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><h3 className="font-bold text-slate-800">Horas de personal por línea y equipo</h3><p className="text-sm text-slate-500">Ranking de operarios ordenado de mayor a menor cantidad de horas.</p></div><div className="grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold text-slate-500">Línea</label><select className="min-w-56 rounded-lg border border-slate-300 bg-white p-2" value={dashboardLaborLine} onChange={(event) => { setDashboardLaborLine(event.target.value); setDashboardLaborEquipment(''); }}><option value="" disabled>Selecciona línea</option>{laborLines.map(line => <option key={line}>{line}</option>)}</select></div><div><label className="mb-1 block text-xs font-semibold text-slate-500">Equipo</label><select disabled={!dashboardLaborLine} className="min-w-56 rounded-lg border border-slate-300 bg-white p-2 disabled:bg-slate-100 disabled:text-slate-400" value={dashboardLaborEquipment} onChange={(event) => setDashboardLaborEquipment(event.target.value)}><option value="" disabled>Selecciona equipo</option>{laborEquipment.map(equipment => <option key={equipment}>{equipment}</option>)}</select></div></div></div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-200 text-slate-500"><th className="p-2">Posición</th><th className="p-2">Personal</th><th className="p-2">Línea</th><th className="p-2">Equipo</th><th className="p-2">Participación</th><th className="p-2 text-right">Horas</th></tr></thead><tbody>{laborRanking.length ? laborRanking.map((item, index) => <tr key={item.worker} className="border-b border-slate-100"><td className="p-2"><span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${index === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>{index + 1}</span></td><td className="p-2 font-medium">{item.worker}</td><td className="p-2">{item.line}</td><td className="p-2">{item.machine}</td><td className="p-2">{item.participations.join(', ')}</td><td className="p-2 text-right font-semibold">{item.hours.toFixed(2)} h</td></tr>) : <tr><td colSpan={6} className="p-8 text-center text-slate-500">{dashboardLaborLine && dashboardLaborEquipment ? 'Sin horas registradas para esta selección.' : 'Selecciona una línea y un equipo para ver el ranking.'}</td></tr>}</tbody></table></div></Card>
         </>}
       </div>
@@ -230,7 +740,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
   const ActiveProductionView = () => {
     const [lossModalOpen, setLossModalOpen] = useState(false);
     const [lossType, setLossType] = useState('availability'); // availability, performance, quality
-    const [lossForm, setLossForm] = useState({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
+    const [lossForm, setLossForm] = useState({ cause: '', duration: '', goodQty: '', reprocessQty: '', wasteQty: '', comment: '' });
     const [editingLossId, setEditingLossId] = useState(null);
     
     const [ticketModalOpen, setTicketModalOpen] = useState(false);
@@ -244,23 +754,18 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
     const [newSupportName, setNewSupportName] = useState('');
     const [supportSearch, setSupportSearch] = useState('');
     const [overweightModalOpen, setOverweightModalOpen] = useState(false);
-    const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''] }]);
+    const [overweightDraft, setOverweightDraft] = useState([{ sampleSize: '', weights: [''], time: '' }]);
     const [targetWeight, setTargetWeight] = useState('');
     const [materialModalOpen, setMaterialModalOpen] = useState(false);
-    const [materialForm, setMaterialForm] = useState({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+    const [materialForm, setMaterialForm] = useState({ type: 'Envasado', reason: '', code: '', description: '', quantity: '', unit: 'unidades' });
 
     if (!activeSession) return <div>No hay sesión activa.</div>;
 
     const metrics = calculateSessionMetrics(activeSession);
+    const mandatoryReady = activeSession.losses.some(loss => loss.category === 'planned_availability') && (activeSession.overweights || []).length > 0 && activeSession.productionRegistered && (activeSession.materialDiscards || []).length > 0;
     const supportCandidates = [...productionLineOperators, ...supportOperators].filter((operator, index, list) => list.findIndex(item => item.id === operator.id) === index);
     const filteredSupportOperators = supportCandidates.filter(operator => `${operator.name} ${operator.id}`.toLowerCase().includes(supportSearch.trim().toLowerCase()));
     const requiresMaintenanceTicket = lossForm.cause === 'Avería mecánica' || lossForm.cause === 'Avería eléctrica';
-    const performanceLosses = activeSession.losses.filter(loss => loss.category === 'performance');
-    const editingPerformanceIndex = performanceLosses.findIndex(loss => loss.id === editingLossId);
-    const performanceStartTime = editingPerformanceIndex >= 0
-      ? (editingPerformanceIndex === 0 ? activeSession.processStart : performanceLosses[editingPerformanceIndex - 1].speedEndTime)
-      : (activeSession.performanceEndTime || activeSession.processStart);
-
     const updateProcessTime = (field, value) => {
       setActiveSession(current => current ? { ...current, [field]: value } : current);
     };
@@ -284,13 +789,9 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
     };
 
     const normalizeLosses = (session, losses) => {
-      let performanceCursor = session.processStart;
-      const normalizedLosses = losses.map(loss => {
-        if (loss.category !== 'performance') return loss;
-        const duration = elapsedMinutes(performanceCursor, loss.speedEndTime);
-        performanceCursor = loss.speedEndTime;
-        return { ...loss, duration };
-      });
+      const normalizedLosses = losses.map(loss => loss.category === 'performance'
+        ? { ...loss, duration: 0, speed: null, speedEndTime: null }
+        : loss);
       const qualityLosses = normalizedLosses.filter(loss => loss.category === 'quality');
       const reprocessQty = qualityLosses.reduce((sum, loss) => sum + Number(loss.reprocessQty || 0), 0);
       const wasteQty = qualityLosses.reduce((sum, loss) => sum + Number(loss.wasteQty || 0), 0);
@@ -298,7 +799,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
       return {
         ...session,
         losses: normalizedLosses,
-        performanceEndTime: performanceCursor === session.processStart ? '' : performanceCursor,
+        performanceEndTime: '',
         reprocessQty,
         wasteQty,
         rejectQty,
@@ -308,7 +809,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
 
     const resetLossEditor = () => {
       setEditingLossId(null);
-      setLossForm({ cause: '', duration: '', reprocessQty: '', wasteQty: '', speed: '', speedEndTime: '', comment: '' });
+      setLossForm({ cause: '', duration: '', goodQty: '', reprocessQty: '', wasteQty: '', comment: '' });
       setMaintenanceTicket(null);
       setTicketForm({ priority: 'Media', detail: '', reportedBy: DUMMY_USER.name });
     };
@@ -324,9 +825,9 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
       setEditingLossId(loss.id);
       setLossType(loss.category);
       setLossForm({
-        cause: loss.cause || '', duration: String(loss.duration || ''),
+        cause: loss.cause || '', duration: String(loss.duration || ''), goodQty: String(loss.goodQty ?? activeSession.goodQty ?? ''),
         reprocessQty: String(loss.reprocessQty || ''), wasteQty: String(loss.wasteQty || ''),
-        speed: String(loss.speed || ''), speedEndTime: loss.speedEndTime || '', comment: loss.comment || ''
+        comment: loss.comment || ''
       });
       setMaintenanceTicket(loss.ticket || null);
       setPlannedSupportDraft((loss.supportOperators || []).map(operator => ({ ...operator })));
@@ -366,7 +867,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
       setMaintenanceTicket({
         code: ticketCode,
         equipment: activeSession.machine,
-        cause: lossForm.cause,
+        cause: lossType === 'quality' ? 'Producción real' : lossForm.cause,
         ...ticketForm,
         createdAt: date.toLocaleTimeString()
       });
@@ -374,20 +875,18 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
     };
 
     const handleAddLoss = () => {
-      const speedDuration = lossType === 'performance'
-        ? elapsedMinutes(performanceStartTime, lossForm.speedEndTime)
-        : parseInt(lossForm.duration) || 0;
       const newLoss = {
         id: Date.now(),
         category: lossType,
         cause: lossForm.cause,
-        duration: speedDuration,
+        duration: lossType === 'performance' ? 0 : parseInt(lossForm.duration) || 0,
         qty: lossType === 'quality' ? (parseInt(lossForm.reprocessQty) || 0) + (parseInt(lossForm.wasteQty) || 0) : 0,
+        goodQty: lossType === 'quality' ? parseInt(lossForm.goodQty) || 0 : null,
         reprocessQty: lossType === 'quality' ? parseInt(lossForm.reprocessQty) || 0 : 0,
         wasteQty: lossType === 'quality' ? parseInt(lossForm.wasteQty) || 0 : 0,
         comment: lossForm.comment,
-        speed: lossType === 'performance' ? (parseFloat(lossForm.speed) || activeSession.standardSpeed) : 0,
-        speedEndTime: lossType === 'performance' ? lossForm.speedEndTime : null,
+        speed: null,
+        speedEndTime: null,
         ticketCode: requiresMaintenanceTicket ? maintenanceTicket?.code : null,
         ticket: requiresMaintenanceTicket ? maintenanceTicket : null,
         supportOperators: lossType === 'planned_availability' ? plannedSupportDraft : [],
@@ -397,7 +896,10 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
       const nextLosses = editingLossId
         ? activeSession.losses.map(loss => loss.id === editingLossId ? { ...newLoss, id: editingLossId, time: loss.time } : loss)
         : [...activeSession.losses, newLoss];
-      setActiveSession(normalizeLosses(activeSession, nextLosses));
+      const nextSession = lossType === 'quality'
+        ? { ...activeSession, realQty: Number(newLoss.goodQty) + Number(newLoss.reprocessQty) + Number(newLoss.wasteQty), productionRegistered: true }
+        : activeSession;
+      setActiveSession(normalizeLosses(nextSession, nextLosses));
       
       setLossModalOpen(false);
       resetLossEditor();
@@ -419,22 +921,46 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
       } : sample));
     };
 
-    const validOverweightSamples = overweightDraft.length > 0 && overweightDraft.every(sample => Number(sample.sampleSize) > 0 && sample.weights.length === Number(sample.sampleSize) && sample.weights.every(weight => Number(weight) > 0));
+    const defaultOverweightTime = (sampleIndex) => {
+      const existingSamples = new Set((activeSession.overweights || []).map(item => item.sampleId)).size;
+      return addMinutesToTime(activeSession.processStart || '00:00', (existingSamples + sampleIndex + 1) * 30);
+    };
+
+    const openOverweightModal = () => {
+      setTargetWeight(String(activeSession.targetWeight || ''));
+      setOverweightDraft([{ sampleSize: '', weights: [''], time: defaultOverweightTime(0) }]);
+      setOverweightModalOpen(true);
+    };
+
+    const addOverweightSample = () => {
+      setOverweightDraft(current => [...current, { sampleSize: '', weights: [''], time: defaultOverweightTime(current.length) }]);
+    };
+
+    const updateSampleTime = (sampleIndex, value) => {
+      setOverweightDraft(current => current.map((sample, index) => index === sampleIndex ? { ...sample, time: value } : sample));
+    };
+
+    const validOverweightSamples = overweightDraft.length > 0 && overweightDraft.every(sample => sample.time && Number(sample.sampleSize) > 0 && sample.weights.length === Number(sample.sampleSize) && sample.weights.every(weight => Number(weight) > 0));
 
     const saveOverweights = () => {
       if (!validOverweightSamples) return;
-      const validRows = overweightDraft.flatMap((sample, sampleIndex) => sample.weights.map((weight, weightIndex) => ({ id: Date.now() + Math.random(), sampleId: `M-${Date.now()}-${sampleIndex + 1}`, sampleSize: Number(sample.sampleSize), measurement: weightIndex + 1, weight: Number(weight), quantity: 1 })));
+      const validRows = overweightDraft.flatMap((sample, sampleIndex) => sample.weights.map((weight, weightIndex) => ({ id: Date.now() + Math.random(), sampleId: `M-${Date.now()}-${sampleIndex + 1}`, sampleSize: Number(sample.sampleSize), measurement: weightIndex + 1, weight: Number(weight), quantity: 1, time: sample.time })));
       if (!validRows.length) return;
       setActiveSession(current => ({ ...current, targetWeight: Number(targetWeight) || current.targetWeight, overweights: [...(current.overweights || []), ...validRows] }));
-      setOverweightDraft([{ sampleSize: '', weights: [''] }]);
+      setOverweightDraft([{ sampleSize: '', weights: [''], time: '' }]);
       setOverweightModalOpen(false);
     };
 
     const saveMaterialDiscard = () => {
-      if (!materialForm.material.trim() || Number(materialForm.quantity) <= 0) return;
-      setActiveSession(current => ({ ...current, materialDiscards: [...(current.materialDiscards || []), { ...materialForm, id: Date.now(), quantity: Number(materialForm.quantity) }] }));
-      setMaterialForm({ type: 'Envasado', material: '', quantity: '', unit: 'unidades', comment: '' });
+      if (!materialForm.reason.trim() || !materialForm.code.trim() || !materialForm.description || Number(materialForm.quantity) <= 0) return;
+      setActiveSession(current => ({ ...current, materialDiscards: [...(current.materialDiscards || []), { ...materialForm, id: Date.now(), quantity: Number(materialForm.quantity), date: new Date().toISOString().slice(0, 10) }] }));
+      setMaterialForm({ type: 'Envasado', reason: '', code: '', description: '', quantity: '', unit: 'unidades' });
       setMaterialModalOpen(false);
+    };
+
+    const updateDiscardCode = (code) => {
+      const material = MATERIAL_PRODUCTS.find(item => item.code.toLowerCase() === code.trim().toLowerCase());
+      setMaterialForm(current => ({ ...current, code, description: material?.description || '', unit: material?.unit || '' }));
     };
 
     const handleFinish = () => {
@@ -483,7 +1009,6 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
               <p className="text-slate-400">Planificado</p>
               <p className="font-semibold">{activeSession.plannedQty.toLocaleString()} und</p>
             </div>
-            <div className="min-w-36"><label className="mb-1 block text-xs font-medium text-slate-400">Producción (und)</label><input type="number" min="0" className="w-36 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-right font-bold text-white outline-none focus:border-blue-400" value={activeSession.realQty || ''} onChange={(event) => { const produced = Math.max(0, Number(event.target.value) || 0); setActiveSession(current => ({ ...current, realQty: produced, goodQty: Math.max(0, produced - Number(current.rejectQty || 0)), productionRegistered: produced > 0 })); }} placeholder="0"/></div>
           </div>
         </div>
 
@@ -512,14 +1037,17 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
         </div>
 
         {/* Ordered factor registration panel */}
-        <div className="mt-8 mb-4 flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-800">Panel de Registro</h3><Button variant="secondary" className="!py-2" onClick={openSupportModal}><Users size={18}/> Personal de apoyo ({activeSession.supportOperators.length})</Button></div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <button onClick={() => openNewLoss('planned_availability')} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-sky-500 hover:shadow-md"><div className="mb-3 rounded-full bg-sky-100 p-4 text-sky-700"><CheckSquare size={32}/></div><span className="text-lg font-bold text-slate-800">Detenciones planificadas</span><span className="text-sm text-slate-500">Set up, limpieza y mantenimiento</span></button>
-          <button onClick={() => { setTargetWeight(String(activeSession.targetWeight || '')); setOverweightModalOpen(true); }} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-3 rounded-full bg-cyan-100 p-4 text-cyan-700"><Scale size={32}/></div><span className="text-lg font-bold text-slate-800">Sobrepesos</span><span className="text-sm text-slate-500">{(activeSession.overweights || []).length} medición(es)</span></button>
-          <button onClick={() => setMaterialModalOpen(true)} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-3 rounded-full bg-orange-100 p-4 text-orange-700"><PackageMinus size={32}/></div><span className="text-lg font-bold text-slate-800">Descarte</span><span className="text-sm text-slate-500">{(activeSession.materialDiscards || []).length} registro(s)</span></button>
-          <button onClick={() => openNewLoss('availability')} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-amber-500 hover:shadow-md"><div className="mb-3 rounded-full bg-amber-100 p-4 text-amber-600"><Pause size={32}/></div><span className="text-lg font-bold text-slate-800">Detenciones no planificadas</span><span className="text-sm text-slate-500">Averías, bloqueos y servicios</span></button>
-          <button onClick={() => openNewLoss('quality')} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-rose-500 hover:shadow-md"><div className="mb-3 rounded-full bg-rose-100 p-4 text-rose-600"><AlertTriangle size={32}/></div><span className="text-lg font-bold text-slate-800">Rechazos</span><span className="text-sm text-slate-500">Reproceso y desperdicio</span></button>
-          <button onClick={() => openNewLoss('performance')} className="flex flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-6 transition-all hover:border-purple-500 hover:shadow-md"><div className="mb-3 rounded-full bg-purple-100 p-4 text-purple-600"><AlertOctagon size={32}/></div><span className="text-lg font-bold text-slate-800">Velocidad de equipo</span><span className="text-sm text-slate-500">Registro de velocidad hasta la hora indicada</span></button>
+        <div className="mt-8 mb-4 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-lg font-bold text-slate-800">Registros obligatorios</h3><p className="text-sm text-slate-500">Completa la información necesaria para enviar la OEE a revisión.</p></div><Button variant="secondary" className="!py-2" onClick={openSupportModal}><Users size={18}/> Personal de apoyo ({activeSession.supportOperators.length})</Button></div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <button onClick={() => openNewLoss('planned_availability')} className="flex min-h-36 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-sky-500 hover:shadow-md"><div className="mb-2 rounded-full bg-sky-100 p-3 text-sky-700"><CheckSquare size={24}/></div><span className="font-bold text-slate-800">Detenciones planificadas</span><span className="text-center text-xs text-slate-500">Set up, limpieza y mantenimiento</span></button>
+          <button onClick={openOverweightModal} className="flex min-h-36 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-cyan-500 hover:shadow-md"><div className="mb-2 rounded-full bg-cyan-100 p-3 text-cyan-700"><Scale size={24}/></div><span className="font-bold text-slate-800">Sobrepesos</span><span className="text-xs text-slate-500">{(activeSession.overweights || []).length} medición(es)</span></button>
+          <button onClick={() => { const production = activeSession.losses.find(loss => loss.category === 'quality'); production ? openEditLoss(production) : openNewLoss('quality'); }} className="flex min-h-36 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-rose-500 hover:shadow-md"><div className="mb-2 rounded-full bg-rose-100 p-3 text-rose-600"><AlertTriangle size={24}/></div><span className="font-bold text-slate-800">Producción real</span><span className="text-center text-xs text-slate-500">Unidades buenas, reproceso y desperdicio</span></button>
+          <button onClick={() => setMaterialModalOpen(true)} className="flex min-h-36 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-orange-500 hover:shadow-md"><div className="mb-2 rounded-full bg-orange-100 p-3 text-orange-700"><PackageMinus size={24}/></div><span className="font-bold text-slate-800">Descarte</span><span className="text-xs text-slate-500">{(activeSession.materialDiscards || []).length} registro(s)</span></button>
+        </div>
+        <div className="mb-4 mt-8"><h3 className="text-lg font-bold text-slate-800">Registros opcionales</h3><p className="text-sm text-slate-500">Registra valores en caso se haya suscitado un evento relacionado.</p></div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <button onClick={() => openNewLoss('availability')} className="flex min-h-32 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-amber-500 hover:shadow-md"><div className="mb-2 rounded-full bg-amber-100 p-3 text-amber-600"><Pause size={24}/></div><span className="font-bold text-slate-800">Detenciones no planificadas</span><span className="text-center text-xs text-slate-500">Averías, bloqueos y servicios</span></button>
+          <button onClick={() => openNewLoss('performance')} className="flex min-h-32 flex-col items-center justify-center rounded-xl border-2 border-slate-200 bg-white p-4 transition-all hover:border-purple-500 hover:shadow-md"><div className="mb-2 rounded-full bg-purple-100 p-3 text-purple-600"><AlertOctagon size={24}/></div><span className="font-bold text-slate-800">Velocidad de equipo</span><span className="text-center text-xs text-slate-500">Motivo y comentario cualitativo</span></button>
         </div>
         {/* Recent Events Log */}
         <Card className="mt-8">
@@ -554,8 +1082,8 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="text-right">
-                      {loss.category === 'performance' ? <><p className="font-bold text-purple-700">{loss.speed} und/min</p><p className="text-sm text-slate-600">{(loss.duration / 60).toFixed(2)} h hasta {loss.speedEndTime}</p></> : loss.duration > 0 && <p className="font-bold text-slate-800">{loss.duration} min</p>}
-                      {loss.qty > 0 && <p className="font-bold text-rose-600">{loss.qty} und</p>}
+                      {loss.category === 'performance' ? <p className="text-sm font-semibold text-purple-700">Registro cualitativo</p> : loss.duration > 0 && <p className="font-bold text-slate-800">{loss.duration} min</p>}
+                      {loss.category === 'quality' ? <p className="font-bold text-emerald-700">{Number(loss.goodQty || 0).toLocaleString()} und buenas</p> : loss.qty > 0 && <p className="font-bold text-rose-600">{loss.qty} und</p>}
                       </div>
                       {role === 'responsible_operator' && <div className="flex gap-1"><button title="Editar evento" aria-label={`Editar ${loss.cause}`} onClick={() => openEditLoss(loss)} className="rounded-lg border border-blue-200 p-2 text-blue-600 hover:bg-blue-50"><Edit size={16}/></button><button title="Eliminar evento" aria-label={`Eliminar ${loss.cause}`} onClick={() => deleteLoss(loss)} className="rounded-lg border border-rose-200 p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={16}/></button></div>}
                     </div>
@@ -569,7 +1097,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
         {/* Action Bar */}
         <div className="fixed bottom-0 left-0 right-0 md:left-64 bg-white border-t border-slate-200 p-4 flex justify-between items-center z-40">
           <Button variant="ghost">Guardar Borrador</Button>
-          <Button variant="primary" onClick={handleFinish} className="!px-8">
+          <Button variant="primary" disabled={!mandatoryReady} onClick={handleFinish} className="!px-8" title={mandatoryReady ? '' : 'Completa los cuatro registros obligatorios'}>
             <CheckCircle size={20} /> Finalizar y Enviar a Revisión
           </Button>
         </div>
@@ -604,10 +1132,10 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
           </div>
         </Modal>
 
-        <Modal isOpen={lossModalOpen} onClose={() => { setLossModalOpen(false); resetLossEditor(); }} title={`${editingLossId ? 'Editar' : 'Registrar'} ${lossType === 'planned_availability' ? 'Detención planificada - Disponibilidad' : lossType === 'availability' ? 'Detención no planificada - Disponibilidad' : lossType === 'performance' ? 'Pérdida de velocidad' : 'Rechazos'}`}>
+        <Modal isOpen={lossModalOpen} onClose={() => { setLossModalOpen(false); resetLossEditor(); }} title={`${editingLossId ? 'Editar' : 'Registrar'} ${lossType === 'planned_availability' ? 'Detención planificada - Disponibilidad' : lossType === 'availability' ? 'Detención no planificada - Disponibilidad' : lossType === 'performance' ? 'observación de velocidad de equipo' : 'producción real'}`}>
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'quality' ? 'Tipo de rechazo' : 'Causa'}</label>
+            {lossType !== 'quality' && <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'performance' ? 'Motivo' : 'Causa'}</label>
               <select 
                 className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500"
                 value={lossForm.cause} onChange={(e) => {
@@ -615,34 +1143,15 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
                   setMaintenanceTicket(null);
                 }}
               >
-                <option value="">Seleccione una causa...</option>
+                <option value="">{lossType === 'performance' ? 'Seleccione un motivo...' : 'Seleccione una causa...'}</option>
                 {lossCauses[lossType].map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-            </div>
+            </div>}
             
             {lossType === 'performance' && (
               <div className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900">
-                <p className="font-semibold">Velocidad estándar definida: {activeSession.standardSpeed} und/min</p>
-                <p className="mt-1 text-purple-700">La duración se calcula desde {performanceStartTime} hasta la hora final registrada.</p>
-              </div>
-            )}
-
-            {lossType === 'performance' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Velocidad de la máquina (und/min)</label>
-                <input
-                  type="number" min="0" step="0.1" placeholder={`Estándar: ${activeSession.standardSpeed}`}
-                  className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-purple-500 focus:ring-purple-500 text-lg"
-                  value={lossForm.speed} onChange={(e) => setLossForm({...lossForm, speed: e.target.value})}
-                />
-              </div>
-            )}
-
-            {lossType === 'performance' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Hora de finalización de velocidad</label>
-                <TimeField label="Hora y minuto final del tramo" value={lossForm.speedEndTime} onChange={(value) => setLossForm({...lossForm, speedEndTime: value})} />
-                {lossForm.speedEndTime && <p className="mt-1 text-sm text-purple-700">Horas de velocidad: {(elapsedMinutes(performanceStartTime, lossForm.speedEndTime) / 60).toFixed(2)} h</p>}
+                <p className="font-semibold">Registro cualitativo del proceso</p>
+                <p className="mt-1 text-purple-700">El rendimiento se calcula automáticamente con la producción registrada, el tiempo operativo y la velocidad estándar de la OT.</p>
               </div>
             )}
 
@@ -666,8 +1175,9 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
             )}
 
             {lossType === 'quality' && (
-              <div>
-                <div className="grid grid-cols-2 gap-3"><div><label className="block text-sm font-medium text-amber-800 mb-1">Reproceso (und)</label><input type="number" min="0" className="w-full rounded-lg border border-amber-300 p-3 text-lg" value={lossForm.reprocessQty} onChange={(e) => setLossForm({...lossForm, reprocessQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Puede volver a fabricarse.</p></div><div><label className="block text-sm font-medium text-rose-800 mb-1">Desperdicio (und)</label><input type="number" min="0" className="w-full rounded-lg border border-rose-300 p-3 text-lg" value={lossForm.wasteQty} onChange={(e) => setLossForm({...lossForm, wasteQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Descarte definitivo.</p></div></div>
+              <div className="space-y-4">
+                <div><label className="block text-sm font-semibold text-slate-800 mb-1">Registra tus unidades buenas</label><input type="number" min="0" className="w-full rounded-lg border border-emerald-300 p-3 text-lg font-semibold" value={lossForm.goodQty} onChange={(e) => setLossForm({...lossForm, goodQty: e.target.value})} placeholder={`Planificado: ${activeSession.plannedQty}`}/></div>
+                {Number(lossForm.goodQty) < Number(activeSession.plannedQty) && lossForm.goodQty !== '' && <div className="rounded-lg border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-amber-900">Las unidades que se esperaban eran {Number(activeSession.plannedQty).toLocaleString()}; sustenta las {(Number(activeSession.plannedQty) - Number(lossForm.goodQty)).toLocaleString()} faltantes.</p><div className="mt-3 grid grid-cols-2 gap-3"><div><label className="block text-sm font-medium text-amber-800 mb-1">A reproceso (und)</label><input type="number" min="0" className="w-full rounded-lg border border-amber-300 p-3 text-lg" value={lossForm.reprocessQty} onChange={(e) => setLossForm({...lossForm, reprocessQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">Puede volver a fabricarse.</p></div><div><label className="block text-sm font-medium text-rose-800 mb-1">A desperdicio (und)</label><input type="number" min="0" className="w-full rounded-lg border border-rose-300 p-3 text-lg" value={lossForm.wasteQty} onChange={(e) => setLossForm({...lossForm, wasteQty: e.target.value})}/><p className="mt-1 text-xs text-slate-500">No puede reprocesarse.</p></div></div><p className="mt-2 text-xs text-amber-800">Sustento registrado: {(Number(lossForm.reprocessQty) + Number(lossForm.wasteQty)).toLocaleString()} de {(Number(activeSession.plannedQty) - Number(lossForm.goodQty)).toLocaleString()} unidades.</p></div>}
               </div>
             )}
 
@@ -693,16 +1203,17 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Comentario (Opcional)</label>
-              <textarea 
+              <label className="block text-sm font-medium text-slate-700 mb-1">{lossType === 'performance' ? 'Comentario de lo ocurrido' : 'Comentario (Opcional)'}</label>
+              <textarea
                 className="w-full border-slate-300 rounded-lg shadow-sm p-3 border focus:border-blue-500 focus:ring-blue-500" rows={3}
+                placeholder={lossType === 'performance' ? 'Describe qué ocurrió durante el proceso y cómo afectó la operación...' : ''}
                 value={lossForm.comment} onChange={(e) => setLossForm({...lossForm, comment: e.target.value})}
               ></textarea>
             </div>
 
             <Button 
               className="w-full !mt-6 !py-4 text-lg" 
-              disabled={!lossForm.cause || ((lossType === 'availability' || lossType === 'planned_availability') && !lossForm.duration) || (lossType === 'planned_availability' && plannedSupportDraft.some(operator => !Number(operator.hours))) || (lossType === 'performance' && (!lossForm.speed || !lossForm.speedEndTime || elapsedMinutes(performanceStartTime, lossForm.speedEndTime) === 0)) || (lossType === 'quality' && (Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) <= 0)) || (requiresMaintenanceTicket && !maintenanceTicket)}
+              disabled={(lossType !== 'quality' && !lossForm.cause) || ((lossType === 'availability' || lossType === 'planned_availability') && !lossForm.duration) || (lossType === 'planned_availability' && plannedSupportDraft.some(operator => !Number(operator.hours))) || (lossType === 'performance' && !lossForm.comment.trim()) || (lossType === 'quality' && (lossForm.goodQty === '' || (Number(lossForm.goodQty) < Number(activeSession.plannedQty) && Number(lossForm.reprocessQty) + Number(lossForm.wasteQty) !== Number(activeSession.plannedQty) - Number(lossForm.goodQty)))) || (requiresMaintenanceTicket && !maintenanceTicket)}
               onClick={handleAddLoss}
             >
               {editingLossId ? 'Guardar cambios' : 'Registrar evento'}
@@ -743,15 +1254,30 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
             <p className="text-sm text-slate-600">Indica la cantidad muestreada y registra el peso individual de cada unidad medida.</p>
             <div className="rounded-lg bg-cyan-50 p-3"><label className="text-sm font-semibold text-cyan-900">Peso objetivo / línea central (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-cyan-200 p-2" value={targetWeight} onChange={(event) => setTargetWeight(event.target.value)} placeholder="Ej. 250"/></div>
             {overweightDraft.map((sample, sampleIndex) => <div key={sampleIndex} className="space-y-3 rounded-lg border border-slate-200 p-4">
-              <div className="flex items-end gap-2"><div className="flex-1"><label className="text-sm font-semibold text-slate-700">Cantidad muestreada</label><input type="number" min="1" max="100" className="mt-1 w-full rounded border border-slate-300 p-2" value={sample.sampleSize} onChange={(event) => updateSampleSize(sampleIndex, event.target.value)} placeholder="Ej. 5"/></div><button aria-label={`Eliminar muestreo ${sampleIndex + 1}`} disabled={overweightDraft.length === 1} onClick={() => setOverweightDraft(current => current.filter((_, index) => index !== sampleIndex))} className="rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_160px_auto]"><div><label className="text-sm font-semibold text-slate-700">Cantidad muestreada</label><input type="number" min="1" max="100" className="mt-1 w-full rounded border border-slate-300 p-2" value={sample.sampleSize} onChange={(event) => updateSampleSize(sampleIndex, event.target.value)} placeholder="Ej. 5"/></div><TimeField label="Hora del muestreo" value={sample.time} onChange={(value) => updateSampleTime(sampleIndex, value)}/><button aria-label={`Eliminar muestreo ${sampleIndex + 1}`} disabled={overweightDraft.length === 1} onClick={() => setOverweightDraft(current => current.filter((_, index) => index !== sampleIndex))} className="self-end rounded p-2 text-rose-600 disabled:opacity-30"><Trash2 size={18}/></button></div>
               {sample.weights.length > 0 && Number(sample.sampleSize) > 0 && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{sample.weights.map((weight, weightIndex) => <div key={weightIndex}><label className="text-xs font-semibold text-slate-500">Peso {weightIndex + 1} (g)</label><input type="number" min="0" step="0.01" className="mt-1 w-full rounded border border-slate-300 p-2" value={weight} onChange={(event) => updateSampleWeight(sampleIndex, weightIndex, event.target.value)}/></div>)}</div>}
             </div>)}
-            <Button variant="secondary" className="w-full" onClick={() => setOverweightDraft(current => [...current, {sampleSize:'',weights:['']}])}><Plus size={18}/> Agregar otro muestreo</Button>
+            <Button variant="secondary" className="w-full" onClick={addOverweightSample}><Plus size={18}/> Agregar otro muestreo</Button>
             <Button className="w-full" disabled={!validOverweightSamples} onClick={saveOverweights}>Guardar muestreos</Button>
           </div>
         </Modal>
         <Modal isOpen={materialModalOpen} onClose={() => setMaterialModalOpen(false)} title="Registrar descarte de material">
-          <div className="space-y-4"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Tipo de material</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.type} onChange={(event) => setMaterialForm({...materialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option><option>Materia prima</option><option>Producto terminado</option></select></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Material descartado</label><input className="w-full rounded-lg border border-slate-300 p-3" placeholder="Ej. blíster, frasco, caja..." value={materialForm.material} onChange={(event) => setMaterialForm({...materialForm,material:event.target.value})}/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-sm font-semibold text-slate-700">Cantidad</label><input type="number" min="0" className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.quantity} onChange={(event) => setMaterialForm({...materialForm,quantity:event.target.value})}/></div><div><label className="mb-1 block text-sm font-semibold text-slate-700">Unidad</label><select className="w-full rounded-lg border border-slate-300 p-3" value={materialForm.unit} onChange={(event) => setMaterialForm({...materialForm,unit:event.target.value})}><option>unidades</option><option>kg</option><option>metros</option></select></div></div><textarea className="w-full rounded-lg border border-slate-300 p-3" placeholder="Comentario opcional" value={materialForm.comment} onChange={(event) => setMaterialForm({...materialForm,comment:event.target.value})}/><Button className="w-full" disabled={!materialForm.material.trim() || Number(materialForm.quantity)<=0} onClick={saveMaterialDiscard}>Guardar descarte</Button></div>
+          <div className="space-y-4">
+            <div><label className="mb-1 block text-sm font-semibold text-slate-700">Tipo de producto</label><select className="w-full rounded-lg border border-slate-300 bg-white p-3" value={materialForm.type} onChange={(event) => setMaterialForm({...materialForm,type:event.target.value})}><option>Envasado</option><option>Acondicionado</option></select></div>
+            <div className="overflow-hidden rounded-xl border border-slate-300 bg-slate-100">
+              <div className="border-b border-slate-300 bg-white px-4 py-2 text-center"><p className="font-bold text-slate-900">DESCARTE DE MATERIAL <span className="text-sm font-medium text-slate-500">(no afecta el OEE)</span></p></div>
+              <div className="space-y-4 p-4">
+                <div className="grid items-center gap-2 sm:grid-cols-[90px_1fr]"><label className="font-semibold text-slate-700">Motivo</label><input className="rounded border border-slate-300 bg-white p-2 font-medium uppercase" placeholder="Ej. PROBLEMA EN ACONDICIONADO" value={materialForm.reason} onChange={(event) => setMaterialForm({...materialForm,reason:event.target.value})}/></div>
+                <div className="grid gap-3 md:grid-cols-[0.9fr_1.8fr_0.8fr_1fr]">
+                  <div><label className="mb-1 block text-sm font-semibold text-slate-700">Código</label><input list="discard-product-codes" className="w-full rounded border border-yellow-400 bg-yellow-200 p-2 font-semibold uppercase" placeholder="K1553" value={materialForm.code} onChange={(event) => updateDiscardCode(event.target.value)}/><datalist id="discard-product-codes">{MATERIAL_PRODUCTS.map(item => <option key={item.code} value={item.code}>{item.description}</option>)}</datalist></div>
+                  <div><label className="mb-1 block text-sm font-semibold text-slate-700">Descripción</label><input readOnly className="w-full rounded border border-yellow-400 bg-yellow-200 p-2 font-semibold text-slate-800" value={materialForm.description} placeholder="Automática según código"/></div>
+                  <div><label className="mb-1 block text-sm font-semibold text-slate-700">Cantidad</label><input type="number" min="0" className="w-full rounded border border-slate-300 bg-white p-2 text-right font-semibold" value={materialForm.quantity} onChange={(event) => setMaterialForm({...materialForm,quantity:event.target.value})}/></div>
+                  <div><label className="mb-1 block text-sm font-semibold text-slate-700">Unidad</label><input readOnly className="w-full rounded border border-yellow-400 bg-yellow-200 p-2 font-semibold text-slate-800" value={materialForm.unit}/></div>
+                </div>
+              </div>
+            </div>
+            <Button className="w-full" disabled={!materialForm.reason.trim() || !materialForm.description || Number(materialForm.quantity)<=0} onClick={saveMaterialDiscard}>Guardar descarte</Button>
+          </div>
         </Modal>
       </div>
     );
@@ -796,7 +1322,7 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
           <Card>
             <div className="px-6 py-4 border-b border-slate-200 flex justify-between bg-slate-50"><div className="flex items-center gap-4"><button onClick={() => setSelectedRecord(null)} className="p-2 hover:bg-slate-200 rounded-lg"><ArrowRight className="rotate-180" size={20} /></button><h3 className="text-lg font-bold">Detalle de OT: {selectedRecord.workOrderId || selectedRecord.id.replace(/^REC-/, '')}</h3></div><Badge variant={selectedRecord.status === 'validated' ? 'success' : 'warning'}>{WORK_ORDER_STATUS[selectedRecord.status]?.label || selectedRecord.status}</Badge></div>
             <div className="p-6 space-y-6"><div className="grid grid-cols-2 md:grid-cols-5 gap-6"><div><p className="text-sm text-slate-500">Registrador</p><p className="font-semibold">{selectedRecord.registrar || selectedRecord.operator}</p></div><div><p className="text-sm text-slate-500">Máquina</p><p className="font-semibold">{selectedRecord.machine}</p></div><div><p className="text-sm text-slate-500">Producción</p><p className="font-semibold">{selectedRecord.realQty.toLocaleString()} und</p></div><div><p className="text-sm text-slate-500">OEE</p><p className="font-bold text-xl" style={{color: getOEEColor(calculateSessionMetrics(selectedRecord).oee)}}>{calculateSessionMetrics(selectedRecord).oee.toFixed(2)}%</p></div><div><p className="text-sm text-slate-500">TNI</p><p className="font-bold text-xl">{Number(calculateSessionMetrics(selectedRecord).tni || 0).toFixed(2)} min</p></div></div>
-            <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between"><span>{loss.cause}</span><span className="font-semibold">{loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>{(loss.ticketCode || loss.ticket) && <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"><p className="font-bold text-amber-900">Ticket {loss.ticketCode || loss.ticket?.code}</p><p className="text-amber-800">Prioridad: {loss.ticket?.priority || 'No indicada'}</p><p className="text-slate-600">{loss.ticket?.detail || loss.comment || 'Sin detalle adicional'}</p><p className="text-xs text-slate-500">Reportado por: {loss.ticket?.reportedBy || selectedRecord.operator || 'Sin dato'}</p></div>}</div>)}</div>}</div>
+            <div><h4 className="font-bold text-slate-800 mb-3">Eventos registrados</h4>{selectedRecord.losses.length === 0 ? <p className="text-slate-500">No se registraron pérdidas.</p> : <div className="space-y-2">{selectedRecord.losses.map(loss => <div key={loss.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between gap-4"><span className="font-medium">{loss.cause}</span><span className="font-semibold">{loss.category === 'performance' ? 'Registro cualitativo' : loss.category === 'quality' ? `${Number(loss.goodQty || 0).toLocaleString()} und buenas` : loss.duration ? `${loss.duration} min` : `${loss.qty} und`}</span></div>{loss.category === 'performance' && loss.comment && <p className="mt-2 text-sm text-slate-600">{loss.comment}</p>}{(loss.ticketCode || loss.ticket) && <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"><p className="font-bold text-amber-900">Ticket {loss.ticketCode || loss.ticket?.code}</p><p className="text-amber-800">Prioridad: {loss.ticket?.priority || 'No indicada'}</p><p className="text-slate-600">{loss.ticket?.detail || loss.comment || 'Sin detalle adicional'}</p><p className="text-xs text-slate-500">Reportado por: {loss.ticket?.reportedBy || selectedRecord.operator || 'Sin dato'}</p></div>}</div>)}</div>}</div>
             {selectedRecord.status === 'review' && <div className="flex gap-4 border-t pt-4"><Button variant="danger" className="flex-1" onClick={() => setObservationModalOpen(true)}><Edit size={18}/> Observado</Button><Button variant="success" className="flex-1" onClick={approveRecord}><CheckCircle size={18}/> Aprobar y validar</Button></div>}</div>
           </Card>
         ) : (
@@ -1030,5 +1556,4 @@ const Button = ({ children, variant = 'primary', className = '', type = 'button'
     </div>
   );
 }
-
 
