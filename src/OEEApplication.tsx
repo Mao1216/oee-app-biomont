@@ -10,6 +10,8 @@ import {
   Eye, Download, Scale, PackageMinus, Trash2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { bioeeRepository } from './lib/bioeeRepository';
 
 const BiomontLogo = ({ className = '' }) => (
   <svg viewBox="0 0 220 82" role="img" aria-label="Biomont" className={className}>
@@ -217,6 +219,11 @@ export default function OEEApplication() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [loginRole, setLoginRole] = useState('');
   const [loginOperatorId, setLoginOperatorId] = useState('OP-B01-003');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [remoteProfile, setRemoteProfile] = useState<any>(null);
+  const [remoteStatus, setRemoteStatus] = useState(isSupabaseConfigured ? 'Conectando con Supabase…' : 'Modo demostración local');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   
   // App Data State
@@ -253,9 +260,35 @@ export default function OEEApplication() {
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(() => loadStoredCatalog('bioee-active-session', null));
 
-  const currentUser = role === 'responsible_operator'
+  const currentUser = remoteProfile ? { id: remoteProfile.id, name: remoteProfile.full_name, role: remoteProfile.role } : role === 'responsible_operator'
     ? (productionLineOperators.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
     : role ? DEMO_CREDENTIALS[role] : null;
+
+  useEffect(() => {
+    if (!supabase) return;
+    let mounted = true;
+    const restoreSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted || !data.session) { if (mounted) setRemoteStatus('Supabase conectado · inicia sesión'); return; }
+      try {
+        const profile = await bioeeRepository.getCurrentProfile();
+        if (!mounted || !profile) return;
+        const nextRole = profile.role === 'supervisor' ? 'supervisor' : 'responsible_operator';
+        setRemoteProfile(profile);
+        setRole(nextRole);
+        setIsLoggedIn(true);
+        setCurrentView(nextRole === 'supervisor' ? 'dashboard' : 'work_orders');
+        setRemoteStatus('Datos sincronizados con Supabase');
+      } catch {
+        if (mounted) setRemoteStatus('Supabase conectado · perfil pendiente');
+      }
+    };
+    void restoreSession();
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session && mounted) { setRemoteProfile(null); setIsLoggedIn(false); setRole(null); }
+    });
+    return () => { mounted = false; listener.subscription.unsubscribe(); };
+  }, []);
 
   useEffect(() => { window.localStorage.setItem('bioee-production-line-operators', JSON.stringify(productionLineOperators)); }, [productionLineOperators]);
   useEffect(() => { window.localStorage.setItem('bioee-plant-equipment-v2', JSON.stringify(plantEquipment)); }, [plantEquipment]);
@@ -275,7 +308,30 @@ export default function OEEApplication() {
     setCurrentView(loginRole === 'responsible_operator' ? 'work_orders' : 'dashboard');
   };
 
-  const logout = () => {
+  const handleSupabaseLogin = async (event) => {
+    event.preventDefault();
+    if (!supabase || !loginEmail || !loginPassword) return;
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
+    if (error) { setAuthError('No se pudo iniciar sesión. Verifica el correo y la contraseña.'); return; }
+    try {
+      const profile = await bioeeRepository.getCurrentProfile();
+      if (!profile) throw new Error('Perfil no encontrado');
+      const nextRole = profile.role === 'supervisor' ? 'supervisor' : 'responsible_operator';
+      setRemoteProfile(profile);
+      setRole(nextRole);
+      setIsLoggedIn(true);
+      setCurrentView(nextRole === 'supervisor' ? 'dashboard' : 'work_orders');
+      setRemoteStatus('Datos sincronizados con Supabase');
+    } catch {
+      setAuthError('El usuario existe, pero todavía no tiene un perfil BIOEE válido.');
+      await supabase.auth.signOut();
+    }
+  };
+
+  const logout = async () => {
+    if (supabase && remoteProfile) await supabase.auth.signOut();
+    setRemoteProfile(null);
     setIsLoggedIn(false);
     setRole(null);
   };
@@ -398,18 +454,18 @@ export default function OEEApplication() {
             <h1 className="text-2xl font-bold text-white">BIOEE</h1>
             <p className="text-blue-100 mt-2">Sistema de Gestión y Medición de OEE</p>
           </div>
-          <form className="p-8 space-y-5" onSubmit={handleLogin}>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-2">Perfil de acceso</label>
-              <select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => setLoginRole(event.target.value)}>
-                <option value="">Selecciona un perfil</option>
-                <option value="supervisor">Supervisor</option>
-                <option value="responsible_operator">Operario responsable</option>
-              </select>
-            </div>
-            {loginRole === 'responsible_operator' && <div><label className="block text-sm font-semibold text-slate-700 mb-2">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{productionLineOperators.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
-            <Button className="w-full !py-3" type="submit" disabled={!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)}><User size={18} /> Ingresar</Button>
-          </form>
+          {isSupabaseConfigured ? <form className="space-y-5 p-8" onSubmit={handleSupabaseLogin}>
+            <div><label className="mb-2 block text-sm font-semibold text-slate-700">Correo corporativo</label><input type="email" autoComplete="email" className="w-full rounded-lg border border-slate-300 p-3" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} placeholder="nombre@biomont.com.pe" /></div>
+            <div><label className="mb-2 block text-sm font-semibold text-slate-700">Contraseña</label><input type="password" autoComplete="current-password" className="w-full rounded-lg border border-slate-300 p-3" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></div>
+            {authError && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{authError}</p>}
+            <Button className="w-full !py-3" type="submit" disabled={!loginEmail || !loginPassword}><User size={18} /> Ingresar</Button>
+            <p className="text-center text-xs text-emerald-700">{remoteStatus}</p>
+          </form> : <form className="space-y-5 p-8" onSubmit={handleLogin}>
+            <div><label className="mb-2 block text-sm font-semibold text-slate-700">Perfil de acceso</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginRole} onChange={(event) => setLoginRole(event.target.value)}><option value="">Selecciona un perfil</option><option value="supervisor">Supervisor</option><option value="responsible_operator">Operario responsable</option></select></div>
+            {loginRole === 'responsible_operator' && <div><label className="mb-2 block text-sm font-semibold text-slate-700">Operario que ingresa</label><select className="w-full rounded-lg border border-slate-300 p-3" value={loginOperatorId} onChange={(event) => setLoginOperatorId(event.target.value)}>{productionLineOperators.map(operator => <option key={operator.id} value={operator.id}>{operator.name}</option>)}</select><p className="mt-1 text-xs text-slate-500">La aplicación mostrará únicamente las OT de la línea asignada.</p></div>}
+            <Button className="w-full !py-3" type="submit" disabled={!loginRole || (loginRole === 'responsible_operator' && !loginOperatorId)}><User size={18} /> Ingresar demostración</Button>
+            <p className="text-center text-xs text-amber-700">{remoteStatus}</p>
+          </form>}
         </div>
       </div>
     );
