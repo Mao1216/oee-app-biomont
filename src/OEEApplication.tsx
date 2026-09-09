@@ -10,6 +10,7 @@ import {
   Eye, Download, Scale, PackageMinus, Trash2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { supabase } from './lib/supabase';
 
 const BiomontLogo = ({ className = '' }) => (
   <svg viewBox="0 0 220 82" role="img" aria-label="Biomont" className={className}>
@@ -248,6 +249,9 @@ export default function OEEApplication() {
   const [dashboardLaborEquipment, setDashboardLaborEquipment] = useState('');
   const [dashboardLot, setDashboardLot] = useState('');
   const [dashboardOrder, setDashboardOrder] = useState('');
+  const [remoteSyncReady, setRemoteSyncReady] = useState(false);
+  const [remoteSyncStatus, setRemoteSyncStatus] = useState(supabase ? 'Conectando datos compartidos…' : 'Datos guardados en este dispositivo');
+  const applyingRemoteState = useRef(false);
   
   // Active Operator Session State
   const [activeSession, setActiveSession] = useState(() => loadStoredCatalog('bioee-active-session', null));
@@ -255,6 +259,69 @@ export default function OEEApplication() {
   const currentUser = role === 'responsible_operator'
     ? (productionLineOperators.find(operator => operator.id === loginOperatorId) || DEMO_CREDENTIALS.responsible_operator)
     : role ? DEMO_CREDENTIALS[role] : null;
+
+  const applySharedState = (sharedData) => {
+    if (!sharedData || typeof sharedData !== 'object') return;
+    applyingRemoteState.current = true;
+    if (Array.isArray(sharedData.records)) setRecords(sharedData.records);
+    if (Array.isArray(sharedData.workOrders)) setWorkOrders(sharedData.workOrders);
+    if (Array.isArray(sharedData.productionLineOperators)) setProductionLineOperators(sharedData.productionLineOperators);
+    if (Array.isArray(sharedData.plantEquipment)) setPlantEquipment(sharedData.plantEquipment);
+    if (sharedData.lossCauses && typeof sharedData.lossCauses === 'object') setLossCauses(sharedData.lossCauses);
+    setActiveSession(sharedData.activeSession || null);
+    window.setTimeout(() => { applyingRemoteState.current = false; }, 0);
+  };
+
+  useEffect(() => {
+    if (!supabase) return;
+    let mounted = true;
+    const initialData = { records, workOrders, productionLineOperators, plantEquipment, lossCauses, activeSession };
+    const connectSharedState = async () => {
+      const { data, error } = await supabase.from('bioee_shared_state').select('data').eq('id', 'main').maybeSingle();
+      if (!mounted) return;
+      if (error) {
+        setRemoteSyncStatus('Sincronización pendiente');
+        return;
+      }
+      if (data?.data) {
+        applySharedState(data.data);
+        setRemoteSyncReady(true);
+        setRemoteSyncStatus('Datos compartidos sincronizados');
+        return;
+      }
+      const hasLocalProductionData = workOrders.length > 0 || records.length > 0 || Boolean(activeSession);
+      if (hasLocalProductionData) {
+        const { error: seedError } = await supabase.from('bioee_shared_state').upsert({ id: 'main', data: initialData, updated_at: new Date().toISOString() });
+        if (!seedError && mounted) {
+          setRemoteSyncReady(true);
+          setRemoteSyncStatus('Datos locales compartidos con Supabase');
+        }
+      } else {
+        setRemoteSyncStatus('Esperando datos compartidos');
+      }
+    };
+    void connectSharedState();
+    const channel = supabase.channel('bioee-shared-state')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bioee_shared_state', filter: 'id=eq.main' }, payload => {
+        const nextSharedData = (payload.new as { data?: any })?.data;
+        if (!mounted || !nextSharedData) return;
+        applySharedState(nextSharedData);
+        setRemoteSyncReady(true);
+        setRemoteSyncStatus('Datos actualizados en tiempo real');
+      })
+      .subscribe();
+    return () => { mounted = false; void supabase.removeChannel(channel); };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !remoteSyncReady || applyingRemoteState.current) return;
+    const timer = window.setTimeout(async () => {
+      const sharedData = { records, workOrders, productionLineOperators, plantEquipment, lossCauses, activeSession };
+      const { error } = await supabase.from('bioee_shared_state').upsert({ id: 'main', data: sharedData, updated_at: new Date().toISOString() });
+      setRemoteSyncStatus(error ? 'No se pudo sincronizar' : 'Datos compartidos sincronizados');
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [records, workOrders, productionLineOperators, plantEquipment, lossCauses, activeSession, remoteSyncReady]);
 
   useEffect(() => { window.localStorage.setItem('bioee-production-line-operators', JSON.stringify(productionLineOperators)); }, [productionLineOperators]);
   useEffect(() => { window.localStorage.setItem('bioee-plant-equipment-v2', JSON.stringify(plantEquipment)); }, [plantEquipment]);
@@ -408,7 +475,7 @@ export default function OEEApplication() {
               <span className="rounded-xl bg-emerald-100 p-3 text-emerald-700"><CheckSquare size={24} /></span>
               <span><span className="block font-bold text-slate-900">Supervisor</span><span className="text-sm text-slate-500">Supervisar indicadores, OT y administración</span></span>
             </button>
-            <p className="text-center text-xs text-emerald-700">Base de datos BIOEE conectada</p>
+            <p className="text-center text-xs text-emerald-700">{remoteSyncStatus}</p>
           </div>
         </div>
       </div>
