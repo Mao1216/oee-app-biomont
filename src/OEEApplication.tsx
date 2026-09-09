@@ -419,13 +419,16 @@ export default function OEEApplication() {
     const losses = Array.isArray(session.losses) ? session.losses : [];
     const processMinutes = elapsedMinutes(session.processStart, session.processEnd);
     const plannedExclusions = losses.filter(loss => loss.category === 'planned_availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
-    const tni = losses.filter(loss => loss.category === 'availability' && String(loss.cause || '').toLowerCase().includes('falla no identificada')).reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
     const plannedTimeMin = Math.max(0, processMinutes - plannedExclusions);
     const availLoss = losses.filter(loss => loss.category === 'availability').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
     const perfLoss = losses.filter(loss => loss.category === 'performance').reduce((sum, loss) => sum + Number(loss.duration || 0), 0);
     const operatingTime = Math.max(0, plannedTimeMin - availLoss);
     const availability = plannedTimeMin > 0 ? (operatingTime / plannedTimeMin) * 100 : 0;
     const standardSpeed = Number(session.standardSpeed) || 0;
+    const plannedQuantity = Number(session.plannedQty ?? session.plannedQuantity ?? 0);
+    const theoreticalPlannedMinutes = standardSpeed > 0 ? plannedQuantity / standardSpeed : 0;
+    const registeredStoppageMinutes = plannedExclusions + availLoss;
+    const tni = Math.max(0, theoreticalPlannedMinutes - (processMinutes + registeredStoppageMinutes));
     const theoreticalProduction = operatingTime * standardSpeed;
     const reportedSpeed = operatingTime > 0 ? Number(session.realQty || 0) / operatingTime : 0;
     const effectiveSpeed = reportedSpeed;
@@ -449,6 +452,8 @@ export default function OEEApplication() {
       plannedTimeMin,
       theoreticalProduction,
       plannedExclusions,
+      theoreticalPlannedMinutes,
+      registeredStoppageMinutes,
       tni
     };
   };
@@ -1144,7 +1149,7 @@ export default function OEEApplication() {
             <h3 className="text-2xl font-bold text-slate-800">{metrics.q.toFixed(2)}%</h3>
             <p className="text-xs text-emerald-600 mt-1">{activeSession.goodQty} und buenas</p>
           </Card>
-          <Card className="border-l-4 border-l-slate-500 p-4"><p className="text-sm font-medium text-slate-600">TNI automático</p><h3 className="text-2xl font-bold text-slate-800">{Number(metrics.tni || 0).toFixed(2)} min</h3><p className="mt-1 text-xs text-slate-500">Trouble Not Identified</p><p className="mt-1 text-[11px] text-slate-400">Suma de detenciones no planificadas con causa “Falla no identificada”.</p></Card>
+          <Card className="border-l-4 border-l-slate-500 p-4"><p className="text-sm font-medium text-slate-600">TNI automático</p><h3 className="text-2xl font-bold text-slate-800">{Number(metrics.tni || 0).toFixed(2)} min</h3><p className="mt-1 text-xs text-slate-500">Tiempo no identificado</p><p className="mt-1 text-[11px] text-slate-400">Plan teórico menos tiempo de operación y detenciones registradas.</p></Card>
         </div>
 
         {/* Ordered factor registration panel */}
